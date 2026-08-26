@@ -12,6 +12,8 @@ MainActor.assumeIsolated {
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private static let appVersion = "0.1.0"
+    private static let automaticRefreshInterval: TimeInterval = 300
+    private static let menuRefreshInterval: TimeInterval = 60
     private let accountStore = CodexAccountStore()
     private let usageClient = CodexUsageClient()
     private var statusItem: NSStatusItem!
@@ -22,6 +24,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var errorByAccount: [String: CodexUsageError] = [:]
     private var refreshTimer: Timer?
     private var clockTimer: Timer?
+    private var refreshTask: Task<Void, Never>?
+    private var refreshRequestID: UUID?
     private var refreshingAccountID: String?
     private var loginProcesses: [String: Process] = [:]
     private var text: AppText {
@@ -54,9 +58,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         self.rebuildMenu()
         self.refreshSelectedAccount()
 
-        self.refreshTimer = Timer.scheduledTimer(withTimeInterval: 300, repeats: true) { [weak self] _ in
+        self.refreshTimer = Timer.scheduledTimer(
+            withTimeInterval: Self.automaticRefreshInterval,
+            repeats: true
+        ) { [weak self] _ in
             Task { @MainActor [weak self] in
-                self?.refreshSelectedAccount()
+                self?.refreshSelectedAccount(ifOlderThan: Self.automaticRefreshInterval)
             }
         }
         self.clockTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
@@ -71,11 +78,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         _ = notification
         self.refreshTimer?.invalidate()
         self.clockTimer?.invalidate()
+        self.refreshTask?.cancel()
     }
 
     func menuWillOpen(_ menu: NSMenu) {
         _ = menu
         self.rebuildMenu()
+        self.refreshSelectedAccount(ifOlderThan: Self.menuRefreshInterval)
     }
 
     private func rebuildMenu() {
@@ -201,7 +210,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 return
             }
         }
+        self.cancelRefresh()
         self.selectedAccountID = self.accounts.first(where: { $0.source == .system })?.id
+        if let selectedAccountID = self.selectedAccountID {
+            self.usageByAccount[selectedAccountID] = nil
+            self.errorByAccount[selectedAccountID] = nil
+        }
         UserDefaults.standard.set(self.selectedAccountID, forKey: "selectedAccountID")
         self.rebuildMenu()
         self.refreshSelectedAccount()
@@ -220,40 +234,67 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         self.refreshSelectedAccount()
     }
 
-    private func refreshSelectedAccount() {
+    private func refreshSelectedAccount(ifOlderThan minimumAge: TimeInterval? = nil) {
         guard let account = self.selectedAccount else {
             self.rebuildMenu()
             return
         }
+        if self.refreshingAccountID == account.id {
+            return
+        }
+        if let minimumAge,
+           let usage = self.usageByAccount[account.id],
+           Date().timeIntervalSince(usage.fetchedAt) < minimumAge
+        {
+            return
+        }
+        self.cancelRefresh()
         do {
             let credentials = try self.accountStore.credentials(for: account)
+            let requestID = UUID()
+            self.refreshRequestID = requestID
             self.refreshingAccountID = account.id
             self.errorByAccount[account.id] = nil
             self.rebuildMenu()
             let accountID = account.id
             let client = self.usageClient
             let homePath = account.homePath
-            Task {
+            self.refreshTask = Task {
                 do {
                     let usage = try await client.fetch(credentials: credentials, homePath: homePath)
                     DispatchQueue.main.async { [weak self] in
-                        guard let self, self.selectedAccountID == accountID else { return }
+                        guard let self,
+                              self.selectedAccountID == accountID,
+                              self.refreshRequestID == requestID
+                        else { return }
                         self.usageByAccount[accountID] = usage
                         self.errorByAccount[accountID] = nil
                         self.refreshingAccountID = nil
+                        self.refreshTask = nil
+                        self.refreshRequestID = nil
                         self.rebuildMenu()
                     }
                 } catch is CancellationError {
                     DispatchQueue.main.async { [weak self] in
-                        guard let self, self.selectedAccountID == accountID else { return }
+                        guard let self,
+                              self.selectedAccountID == accountID,
+                              self.refreshRequestID == requestID
+                        else { return }
                         self.refreshingAccountID = nil
+                        self.refreshTask = nil
+                        self.refreshRequestID = nil
                         self.rebuildMenu()
                     }
                 } catch {
                     DispatchQueue.main.async { [weak self] in
-                        guard let self, self.selectedAccountID == accountID else { return }
+                        guard let self,
+                              self.selectedAccountID == accountID,
+                              self.refreshRequestID == requestID
+                        else { return }
                         self.errorByAccount[accountID] = self.codexError(error)
                         self.refreshingAccountID = nil
+                        self.refreshTask = nil
+                        self.refreshRequestID = nil
                         self.rebuildMenu()
                     }
                 }
@@ -261,8 +302,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         } catch {
             self.errorByAccount[account.id] = self.codexError(error)
             self.refreshingAccountID = nil
+            self.refreshTask = nil
+            self.refreshRequestID = nil
             self.rebuildMenu()
         }
+    }
+
+    private func cancelRefresh() {
+        self.refreshTask?.cancel()
+        self.refreshTask = nil
+        self.refreshRequestID = nil
+        self.refreshingAccountID = nil
     }
 
     @objc private func addAccount() {
