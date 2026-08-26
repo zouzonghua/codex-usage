@@ -1,15 +1,17 @@
-name: Release
+name: Auto Release
 
 on:
   push:
-    tags:
-      - "v*"
+    branches:
+      - dev
+      - main
 
 permissions:
   contents: write
+  pull-requests: read
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release
   cancel-in-progress: false
 
 jobs:
@@ -21,38 +23,68 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      - name: Resolve release tag
-        id: release
+      - name: Verify stable release source
+        if: github.ref_name == 'main'
         env:
-          REF_NAME: ${{ github.ref_name }}
+          GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
-
-          tag="$REF_NAME"
-
-          if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-(beta|rc)\.[0-9]+)?$ ]]; then
-            echo "Invalid release tag: $tag" >&2
+          if ! gh api "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/pulls" \
+            --jq '.[] | select(.base.ref == "main" and .merged_at != null) | .head.ref' \
+            | grep -qx 'dev'; then
+            echo "Stable releases require a merged dev -> main pull request." >&2
             exit 1
           fi
 
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
-          echo "marketing_version=${tag#v}" | sed 's/-.*$//' >> "$GITHUB_OUTPUT"
-          echo "Release tag: $tag"
+      - name: Wait for merged dev Beta
+        if: github.ref_name == 'main'
+        shell: bash
+        run: |
+          set -euo pipefail
+          dev_merge_parent="$(git rev-parse --verify HEAD^2)"
+          for attempt in {1..30}; do
+            git fetch --tags --force
+            if git tag --points-at "$dev_merge_parent" \
+              | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+-beta\.[0-9]+$'; then
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "Timed out waiting for the merged dev Beta tag." >&2
+          exit 1
+
+      - name: Resolve release version
+        id: release
+        env:
+          RELEASE_CHANNEL: ${{ github.ref_name == 'dev' && 'beta' || 'stable' }}
+          BETA_NUMBER: ${{ github.run_number }}
+        shell: bash
+        run: ./Scripts/resolve_release_version.sh "$RELEASE_CHANNEL" "$BETA_NUMBER"
+
+      - name: No releasable changes
+        if: steps.release.outputs.skip == 'true'
+        run: echo "No feat, fix, perf or breaking changes since the latest stable release."
 
       - name: Show toolchain
+        if: steps.release.outputs.skip != 'true'
         run: |
           sw_vers
           swift --version
 
       - name: Run tests
+        if: steps.release.outputs.skip != 'true'
         run: swift test
 
       - name: Build release binary
+        if: steps.release.outputs.skip != 'true'
         run: swift build -c release
 
       - name: Package DMG
+        if: steps.release.outputs.skip != 'true'
         env:
           BUILD_NUMBER: ${{ github.run_number }}
           ARTIFACT_LABEL: ${{ steps.release.outputs.tag }}
@@ -61,6 +93,7 @@ jobs:
         run: ./Scripts/package_app.sh
 
       - name: Generate and verify SHA256
+        if: steps.release.outputs.skip != 'true'
         env:
           RELEASE_TAG: ${{ steps.release.outputs.tag }}
         shell: bash
@@ -73,19 +106,47 @@ jobs:
             shasum -a 256 -c "$dmg.sha256"
           )
 
+      - name: Create Git tag
+        if: steps.release.outputs.skip != 'true'
+        env:
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git rev-parse "$RELEASE_TAG" >/dev/null 2>&1; then
+            tag_sha="$(git rev-list -n 1 "$RELEASE_TAG")"
+            if [[ "$tag_sha" != "$GITHUB_SHA" ]]; then
+              echo "Tag $RELEASE_TAG already points to $tag_sha, expected $GITHUB_SHA." >&2
+              exit 1
+            fi
+            echo "Tag $RELEASE_TAG already exists."
+          else
+            git tag "$RELEASE_TAG" "$GITHUB_SHA"
+            git push origin "$RELEASE_TAG"
+          fi
+
       - name: Create GitHub Release
+        if: steps.release.outputs.skip != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ steps.release.outputs.tag }}
         shell: bash
         run: |
           set -euo pipefail
-          release_args=(--title "CodexUsage ${RELEASE_TAG}" --generate-notes --verify-tag)
-          if [[ "$RELEASE_TAG" =~ -(beta|rc)\. ]]; then
-            release_args+=(--prerelease)
+          assets=(
+            "dist/CodexUsage-${RELEASE_TAG}.dmg"
+            "dist/CodexUsage-${RELEASE_TAG}.dmg.sha256"
+          )
+
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" "${assets[@]}" --clobber
+            exit 0
           fi
 
+          release_args=(--title "CodexUsage ${RELEASE_TAG}" --generate-notes --verify-tag)
+          if [[ "$RELEASE_TAG" =~ -beta\. ]]; then
+            release_args+=(--prerelease)
+          fi
           gh release create "$RELEASE_TAG" \
             "${release_args[@]}" \
-            "dist/CodexUsage-${RELEASE_TAG}.dmg" \
-            "dist/CodexUsage-${RELEASE_TAG}.dmg.sha256"
+            "${assets[@]}"

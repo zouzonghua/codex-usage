@@ -31,18 +31,21 @@ swift build
 
 ## GitHub Actions
 
-合并到 `dev` 分支后会自动运行测试并构建 macOS 安装包。到 GitHub Actions 对应运行记录的 Artifacts 下载 `.dmg`，打开后将 `CodexUsage.app` 拖到「Applications」即可。
+向 `dev` 或 `main` 提交 PR 时会自动运行测试与构建。
 
-这是开发构建，未配置 Developer ID 签名和公证；首次打开时 macOS 可能需要在「系统设置 → 隐私与安全性」中手动允许。
+合并到 `dev` 后，会根据 Conventional Commits 自动计算下一个版本，使用 GitHub Actions 运行编号生成递增的 Beta Tag（例如 `v0.2.0-beta.12`），并创建包含 DMG 与 SHA256 校验文件的 GitHub Pre-release。
 
-正式版本通过 Tag 构建：
+使用 merge commit 将 `dev` 合并到 `main` 后，会把最新 Beta 提升为同版本号的正式 Tag（例如 `v0.2.0`），并创建 GitHub Release。不要使用 squash 或 rebase 合并。
 
-```sh
-git tag v0.1.0-rc.1   # 候选版本
-git push origin v0.1.0-rc.1
+发布任务会串行执行。等待当前 `Auto Release` 完成后，再合并下一次发布变更，避免 GitHub 取消排队中的旧任务。
 
-git tag v0.1.0         # 正式版本
-git push origin v0.1.0
-```
+Beta 版本递增规则：
 
-`rc` Tag 会创建 GitHub Pre-release，正式 Tag 会创建普通 GitHub Release，并附带 DMG 与 SHA256 校验文件。当前发布包仍是开发签名，暂未配置 Developer ID 签名和 Apple 公证。
+- `fix:` / `perf:`：递增补丁版本
+- `feat:`：递增次版本
+- `BREAKING CHANGE:` 或带 `!` 的提交：递增主版本
+- 其他提交：不生成新版本
+
+首次发布使用 `Resources/Info.plist` 中的版本作为起始版本。
+
+当前发布包仍使用 ad-hoc 签名，暂未配置 Developer ID 签名和 Apple 公证；首次打开时 macOS 可能需要在「系统设置 → 隐私与安全性」中手动允许。
