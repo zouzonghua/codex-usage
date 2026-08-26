@@ -169,16 +169,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func switchCodexAccountMenuItem() -> NSMenuItem {
         let parent = NSMenuItem(title: self.text.switchCodexAccount, action: nil, keyEquivalent: "")
         let submenu = NSMenu(title: self.text.switchCodexAccount)
-        for account in self.accounts where account.source == .saved {
+        let systemAccountID = self.accounts.first(where: { $0.source == .system })?.id
+        for account in self.accounts {
             let item = NSMenuItem(
                 title: self.text.accountName(account),
                 action: #selector(switchCodexAccount(_:)),
                 keyEquivalent: "")
             item.target = self
             item.representedObject = account.id
+            item.state = account.id == systemAccountID ? .on : .off
             submenu.addItem(item)
         }
-        if self.accounts.contains(where: { $0.source == .saved }) {
+        if !self.accounts.isEmpty {
             submenu.addItem(.separator())
         }
         let addItem = NSMenuItem(title: self.text.addAccount, action: #selector(addAccount), keyEquivalent: "")
@@ -232,17 +234,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func switchCodexAccount(_ sender: NSMenuItem) {
         guard let id = sender.representedObject as? String,
-              let account = self.accounts.first(where: { $0.id == id && $0.source == .saved })
+              let account = self.accounts.first(where: { $0.id == id })
         else { return }
 
-        do {
-            try self.accountStore.activate(account)
-            self.accounts = self.accountStore.loadAccounts()
-        } catch {
-            self.showAlert(
-                title: self.text.unableToSwitchAccount,
-                message: self.text.errorMessage(error))
-            return
+        if account.source == .saved {
+            do {
+                try self.accountStore.activate(account)
+                self.accounts = self.accountStore.loadAccounts()
+            } catch {
+                self.showAlert(
+                    title: self.text.unableToSwitchAccount,
+                    message: self.text.errorMessage(error))
+                return
+            }
         }
 
         self.cancelRefresh()
