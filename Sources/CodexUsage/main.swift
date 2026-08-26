@@ -89,6 +89,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func rebuildMenu() {
         let menu = NSMenu()
+        menu.autoenablesItems = false
         menu.delegate = self
 
         if let account = self.selectedAccount {
@@ -205,7 +206,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func infoItem(title: String) -> NSMenuItem {
         let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
-        item.isEnabled = false
+        item.attributedTitle = NSAttributedString(
+            string: title,
+            attributes: [.foregroundColor: NSColor.labelColor])
         return item
     }
 
