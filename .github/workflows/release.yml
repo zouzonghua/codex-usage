@@ -143,7 +143,7 @@ jobs:
             exit 0
           fi
 
-          release_args=(--title "CodexUsage ${RELEASE_TAG}" --generate-notes --verify-tag)
+          release_args=(--title "$RELEASE_TAG" --generate-notes --verify-tag)
           if [[ "$RELEASE_TAG" =~ -beta\. ]]; then
             release_args+=(--prerelease)
           fi
