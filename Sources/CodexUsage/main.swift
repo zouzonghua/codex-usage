@@ -92,6 +92,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.delegate = self
 
         if let account = self.selectedAccount {
+            if !account.email.isEmpty {
+                menu.addItem(self.infoItem(title: account.email))
+                menu.addItem(.separator())
+            }
             if let usage = self.usageByAccount[account.id] {
                 menu.addItem(self.infoItem(title: self.text.fiveHourQuota(usage.primary)))
                 menu.addItem(self.infoItem(title: self.text.weeklyQuota(usage.secondary)))
