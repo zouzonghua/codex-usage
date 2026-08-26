@@ -2,3 +2,4 @@
 .DS_Store
 CodexUsage.app/
 .agents/
+dist/
