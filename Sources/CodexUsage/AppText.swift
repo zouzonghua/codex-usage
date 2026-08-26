@@ -32,8 +32,12 @@ struct AppText {
         self.value("刷新", "Refresh")
     }
 
-    var switchAccount: String {
-        self.value("切换账号", "Switch account")
+    var viewAccountUsage: String {
+        self.value("查看账号额度", "View account usage")
+    }
+
+    var switchCodexAccount: String {
+        self.value("切换 Codex 账号", "Switch Codex account")
     }
 
     var addAccount: String {
@@ -82,8 +86,8 @@ struct AppText {
 
     var aboutDescription: String {
         self.value(
-            "查看 Codex 额度、重置额度和切换账号。",
-            "View Codex usage, reset credits, and switch accounts.")
+            "查看 Codex 额度、重置额度，以及查看或切换账号。",
+            "View Codex usage, reset credits, and view or switch accounts.")
     }
 
     var ok: String {
@@ -104,8 +108,8 @@ struct AppText {
 
     var addingAccountMessage: String {
         self.value(
-            "浏览器登录完成后，账号会自动出现在“切换账号”菜单中。",
-            "The account will appear in “Switch account” after browser login completes.")
+            "浏览器登录完成后，账号会自动出现在“切换 Codex 账号”菜单中。",
+            "The account will appear in “Switch Codex account” after browser login completes.")
     }
 
     var loginFailed: String {
@@ -119,9 +123,7 @@ struct AppText {
     func accountName(_ account: CodexAccount) -> String {
         if account.source == .system {
             if !account.email.isEmpty {
-                return self.value(
-                    "当前账号：\(account.email)",
-                    "Current account: \(account.email)")
+                return account.email
             }
             return self.currentAccount
         }
