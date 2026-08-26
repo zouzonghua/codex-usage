@@ -23,9 +23,19 @@ if [[ -n "$marketing_version" && ! "$marketing_version" =~ ^[0-9]+\.[0-9]+\.[0-9
 fi
 
 rm -rf "$app_dir" "$dmg_staging_dir" "$dmg_path"
-mkdir -p "$app_dir/Contents/MacOS"
+mkdir -p "$app_dir/Contents/MacOS" "$app_dir/Contents/Resources"
 cp "$bin_dir/CodexUsage" "$app_dir/Contents/MacOS/CodexUsage"
 cp "$project_root/Resources/Info.plist" "$app_dir/Contents/Info.plist"
+xcrun actool \
+    "$project_root/Resources/Assets.xcassets" \
+    --compile "$app_dir/Contents/Resources" \
+    --platform macosx \
+    --minimum-deployment-target 14.0 \
+    --app-icon AppIcon \
+    --output-partial-info-plist "$dist_dir/AppIcon-Info.plist" \
+    >/dev/null
+/usr/libexec/PlistBuddy -c "Merge $dist_dir/AppIcon-Info.plist" "$app_dir/Contents/Info.plist"
+rm -f "$dist_dir/AppIcon-Info.plist"
 
 if [[ -n "$marketing_version" ]]; then
     /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $marketing_version" "$app_dir/Contents/Info.plist"
