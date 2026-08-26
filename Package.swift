@@ -14,8 +14,7 @@ let package = Package(
         .executableTarget(
             name: "CodexUsage",
             dependencies: ["CodexUsageCore"],
-            path: "Sources/CodexUsage",
-            resources: [.process("Resources")]),
+            path: "Sources/CodexUsage"),
         .testTarget(
             name: "CodexUsageTests",
             dependencies: ["CodexUsageCore"],

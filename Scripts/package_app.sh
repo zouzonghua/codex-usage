@@ -26,10 +26,6 @@ rm -rf "$app_dir" "$dmg_staging_dir" "$dmg_path"
 mkdir -p "$app_dir/Contents/MacOS" "$app_dir/Contents/Resources"
 cp "$bin_dir/CodexUsage" "$app_dir/Contents/MacOS/CodexUsage"
 cp "$project_root/Resources/Info.plist" "$app_dir/Contents/Info.plist"
-resource_bundle="$bin_dir/CodexUsage_CodexUsage.bundle"
-if [[ -d "$resource_bundle" ]]; then
-    cp -R "$resource_bundle" "$app_dir/Contents/Resources/"
-fi
 xcrun actool \
     "$project_root/Resources/Assets.xcassets" \
     --compile "$app_dir/Contents/Resources" \

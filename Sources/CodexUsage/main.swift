@@ -45,9 +45,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func start() {
         guard self.statusItem == nil else { return }
-        if let applicationIcon = Self.applicationIcon() {
-            NSApp.applicationIconImage = applicationIcon
-        }
         self.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         self.statusItem.button?.image = CodexStatusIcon.image(primaryRemaining: nil, weeklyRemaining: nil)
         self.statusItem.button?.imagePosition = .imageOnly
@@ -464,13 +461,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             return URL(fileURLWithPath: path)
         }
         return nil
-    }
-
-    private static func applicationIcon() -> NSImage? {
-        guard let url = Bundle.module.url(forResource: "AppIcon", withExtension: "png") else {
-            return nil
-        }
-        return NSImage(contentsOf: url)
     }
 
     private func showAlert(title: String, message: String) {
