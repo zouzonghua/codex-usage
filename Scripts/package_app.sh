@@ -36,6 +36,13 @@ xcrun actool \
     >/dev/null
 /usr/libexec/PlistBuddy -c "Merge $dist_dir/AppIcon-Info.plist" "$app_dir/Contents/Info.plist"
 rm -f "$dist_dir/AppIcon-Info.plist"
+# The standalone package uses the generated .icns directly, so do not leave
+# an asset-catalog reference after removing Assets.car.
+/usr/libexec/PlistBuddy -c "Delete :CFBundleIconName" "$app_dir/Contents/Info.plist" 2>/dev/null || true
+/usr/libexec/PlistBuddy -c "Set :CFBundleIconFile AppIcon" "$app_dir/Contents/Info.plist"
+# The package only needs AppIcon.icns; Assets.car contains the same raster sizes
+# and would unnecessarily add more than 2 MB to the standalone DMG.
+rm -f "$app_dir/Contents/Resources/Assets.car"
 
 if [[ -n "$marketing_version" ]]; then
     /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $marketing_version" "$app_dir/Contents/Info.plist"
