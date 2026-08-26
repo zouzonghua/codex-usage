@@ -118,6 +118,11 @@ struct AppText {
 
     func accountName(_ account: CodexAccount) -> String {
         if account.source == .system {
+            if !account.email.isEmpty {
+                return self.value(
+                    "当前账号：\(account.email)",
+                    "Current account: \(account.email)")
+            }
             return self.currentAccount
         }
         if !account.email.isEmpty {

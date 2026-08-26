@@ -212,7 +212,7 @@ public final class CodexAccountStore {
         }
         return CodexAccount(
             id: id,
-            email: credentials.email ?? (source == .system ? "当前 Codex 账号" : id),
+            email: credentials.email ?? (source == .system ? "" : id),
             accountID: credentials.accountID,
             homePath: homeURL.standardizedFileURL.path,
             source: source)
