@@ -1,0 +1,91 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build macOS release
+    runs-on: macos-14
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve release tag
+        id: release
+        env:
+          REF_NAME: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          tag="$REF_NAME"
+
+          if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-(beta|rc)\.[0-9]+)?$ ]]; then
+            echo "Invalid release tag: $tag" >&2
+            exit 1
+          fi
+
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "marketing_version=${tag#v}" | sed 's/-.*$//' >> "$GITHUB_OUTPUT"
+          echo "Release tag: $tag"
+
+      - name: Show toolchain
+        run: |
+          sw_vers
+          swift --version
+
+      - name: Run tests
+        run: swift test
+
+      - name: Build release binary
+        run: swift build -c release
+
+      - name: Package DMG
+        env:
+          BUILD_NUMBER: ${{ github.run_number }}
+          ARTIFACT_LABEL: ${{ steps.release.outputs.tag }}
+          MARKETING_VERSION: ${{ steps.release.outputs.marketing_version }}
+          BIN_DIR: ${{ github.workspace }}/.build/arm64-apple-macosx/release
+        run: ./Scripts/package_app.sh
+
+      - name: Generate and verify SHA256
+        env:
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          dmg="CodexUsage-${RELEASE_TAG}.dmg"
+          (
+            cd dist
+            shasum -a 256 "$dmg" > "$dmg.sha256"
+            shasum -a 256 -c "$dmg.sha256"
+          )
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          release_args=(--title "CodexUsage ${RELEASE_TAG}" --generate-notes --verify-tag)
+          if [[ "$RELEASE_TAG" =~ -(beta|rc)\. ]]; then
+            release_args+=(--prerelease)
+          fi
+
+          gh release create "$RELEASE_TAG" \
+            "${release_args[@]}" \
+            "dist/CodexUsage-${RELEASE_TAG}.dmg" \
+            "dist/CodexUsage-${RELEASE_TAG}.dmg.sha256"

@@ -28,3 +28,21 @@ swift build
 ```
 
 重置额度仅展示服务端返回的可用数量和到期时间；应用不会自动兑换或修改额度。
+
+## GitHub Actions
+
+合并到 `dev` 分支后会自动运行测试并构建 macOS 安装包。到 GitHub Actions 对应运行记录的 Artifacts 下载 `.dmg`，打开后将 `CodexUsage.app` 拖到「Applications」即可。
+
+这是开发构建，未配置 Developer ID 签名和公证；首次打开时 macOS 可能需要在「系统设置 → 隐私与安全性」中手动允许。
+
+正式版本通过 Tag 构建：
+
+```sh
+git tag v0.1.0-rc.1   # 候选版本
+git push origin v0.1.0-rc.1
+
+git tag v0.1.0         # 正式版本
+git push origin v0.1.0
+```
+
+`rc` Tag 会创建 GitHub Pre-release，正式 Tag 会创建普通 GitHub Release，并附带 DMG 与 SHA256 校验文件。当前发布包仍是开发签名，暂未配置 Developer ID 签名和 Apple 公证。

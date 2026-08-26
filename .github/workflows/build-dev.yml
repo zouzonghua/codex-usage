@@ -1,0 +1,63 @@
+name: Build Dev
+
+on:
+  push:
+    branches:
+      - dev
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-dev-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Test and package macOS app
+    runs-on: macos-14
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Show toolchain
+        run: |
+          sw_vers
+          swift --version
+
+      - name: Run tests
+        run: swift test
+
+      - name: Build release binary
+        run: swift build -c release
+
+      - name: Package app
+        env:
+          BUILD_NUMBER: ${{ github.run_number }}
+          BIN_DIR: ${{ github.workspace }}/.build/arm64-apple-macosx/release
+        run: ./Scripts/package_app.sh
+
+      - name: Generate and verify SHA256
+        env:
+          BUILD_NUMBER: ${{ github.run_number }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          dmg="CodexUsage-${BUILD_NUMBER}.dmg"
+          (
+            cd dist
+            shasum -a 256 "$dmg" > "$dmg.sha256"
+            shasum -a 256 -c "$dmg.sha256"
+          )
+
+      - name: Upload app artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: CodexUsage-dev-${{ github.run_number }}-${{ github.sha }}
+          path: |
+            dist/CodexUsage-${{ github.run_number }}.dmg
+            dist/CodexUsage-${{ github.run_number }}.dmg.sha256
+          if-no-files-found: error
+          retention-days: 14
