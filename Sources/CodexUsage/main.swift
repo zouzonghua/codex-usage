@@ -92,11 +92,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.delegate = self
 
         if let account = self.selectedAccount {
-            let accountItem = NSMenuItem(title: self.text.accountName(account), action: nil, keyEquivalent: "")
-            accountItem.isEnabled = false
-            menu.addItem(accountItem)
-            menu.addItem(.separator())
-
             if let usage = self.usageByAccount[account.id] {
                 menu.addItem(self.infoItem(title: self.text.fiveHourQuota(usage.primary)))
                 menu.addItem(self.infoItem(title: self.text.weeklyQuota(usage.secondary)))
@@ -131,7 +126,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(refreshItem)
 
         menu.addItem(.separator())
-        menu.addItem(self.accountMenuItem())
+        menu.addItem(self.viewAccountUsageMenuItem())
+        menu.addItem(self.switchCodexAccountMenuItem())
         menu.addItem(.separator())
         menu.addItem(self.languageMenuItem())
         menu.addItem(.separator())
@@ -148,20 +144,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         self.updateStatusIcon()
     }
 
-    private func accountMenuItem() -> NSMenuItem {
-        let parent = NSMenuItem(title: self.text.switchAccount, action: nil, keyEquivalent: "")
-        let submenu = NSMenu(title: self.text.switchAccount)
+    private func viewAccountUsageMenuItem() -> NSMenuItem {
+        let parent = NSMenuItem(title: self.text.viewAccountUsage, action: nil, keyEquivalent: "")
+        let submenu = NSMenu(title: self.text.viewAccountUsage)
         for account in self.accounts {
             let item = NSMenuItem(
                 title: self.text.accountName(account),
-                action: #selector(selectAccount(_:)),
+                action: #selector(selectUsageAccount(_:)),
                 keyEquivalent: "")
             item.target = self
             item.representedObject = account.id
             item.state = account.id == self.selectedAccountID ? .on : .off
             submenu.addItem(item)
         }
-        if !self.accounts.isEmpty { submenu.addItem(.separator()) }
+        parent.submenu = submenu
+        return parent
+    }
+
+    private func switchCodexAccountMenuItem() -> NSMenuItem {
+        let parent = NSMenuItem(title: self.text.switchCodexAccount, action: nil, keyEquivalent: "")
+        let submenu = NSMenu(title: self.text.switchCodexAccount)
+        for account in self.accounts where account.source == .saved {
+            let item = NSMenuItem(
+                title: self.text.accountName(account),
+                action: #selector(switchCodexAccount(_:)),
+                keyEquivalent: "")
+            item.target = self
+            item.representedObject = account.id
+            submenu.addItem(item)
+        }
+        if self.accounts.contains(where: { $0.source == .saved }) {
+            submenu.addItem(.separator())
+        }
         let addItem = NSMenuItem(title: self.text.addAccount, action: #selector(addAccount), keyEquivalent: "")
         addItem.target = self
         submenu.addItem(addItem)
@@ -195,21 +209,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         self.accounts.first { $0.id == self.selectedAccountID }
     }
 
-    @objc private func selectAccount(_ sender: NSMenuItem) {
+    @objc private func selectUsageAccount(_ sender: NSMenuItem) {
         guard let id = sender.representedObject as? String,
-              let account = self.accounts.first(where: { $0.id == id })
+              self.accounts.contains(where: { $0.id == id })
         else { return }
-        if account.source == .saved {
-            do {
-                try self.accountStore.activate(account)
-                self.accounts = self.accountStore.loadAccounts()
-            } catch {
-                self.showAlert(
-                    title: self.text.unableToSwitchAccount,
-                    message: self.text.errorMessage(error))
-                return
-            }
+
+        self.cancelRefresh()
+        self.selectedAccountID = id
+        self.usageByAccount[id] = nil
+        self.errorByAccount[id] = nil
+        UserDefaults.standard.set(self.selectedAccountID, forKey: "selectedAccountID")
+        self.rebuildMenu()
+        self.refreshSelectedAccount()
+    }
+
+    @objc private func switchCodexAccount(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? String,
+              let account = self.accounts.first(where: { $0.id == id && $0.source == .saved })
+        else { return }
+
+        do {
+            try self.accountStore.activate(account)
+            self.accounts = self.accountStore.loadAccounts()
+        } catch {
+            self.showAlert(
+                title: self.text.unableToSwitchAccount,
+                message: self.text.errorMessage(error))
+            return
         }
+
         self.cancelRefresh()
         self.selectedAccountID = self.accounts.first(where: { $0.source == .system })?.id
         if let selectedAccountID = self.selectedAccountID {
