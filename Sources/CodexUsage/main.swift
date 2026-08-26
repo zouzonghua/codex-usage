@@ -89,6 +89,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func rebuildMenu() {
         let menu = NSMenu()
+        menu.autoenablesItems = false
         menu.delegate = self
 
         if let account = self.selectedAccount {
