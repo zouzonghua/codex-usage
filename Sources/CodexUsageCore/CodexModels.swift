@@ -69,6 +69,7 @@ public struct CodexUsage: Equatable, Sendable {
     public let credits: Double?
     public let resetCredits: CodexResetCreditSummary?
     public let fetchedAt: Date
+    public let subscriptionExpiresAt: Date?
 
     public init(
         planType: String?,
@@ -76,7 +77,8 @@ public struct CodexUsage: Equatable, Sendable {
         secondary: CodexRateWindow?,
         credits: Double?,
         resetCredits: CodexResetCreditSummary?,
-        fetchedAt: Date = Date())
+        fetchedAt: Date = Date(),
+        subscriptionExpiresAt: Date? = nil)
     {
         self.planType = planType
         self.primary = primary
@@ -84,6 +86,7 @@ public struct CodexUsage: Equatable, Sendable {
         self.credits = credits
         self.resetCredits = resetCredits
         self.fetchedAt = fetchedAt
+        self.subscriptionExpiresAt = subscriptionExpiresAt
     }
 }
 

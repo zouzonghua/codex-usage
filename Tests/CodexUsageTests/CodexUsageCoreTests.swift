@@ -17,7 +17,7 @@ struct CodexUsageCoreTests {
         #expect(credentials.email == "dev@example.com")
     }
 
-    @Test func parsesUsageAndResetCreditPayloads() throws {
+    @Test func parsesUsageResetCreditAndSubscriptionPayloads() throws {
         let usageData = Data(#"""
         {
             "plan_type": "pro",
@@ -38,9 +38,11 @@ struct CodexUsageCoreTests {
             ]
         }
         """#.utf8)
+        let subscriptionData = Data(#"{"plan_type":"pro","active_until":"2099-01-01T00:00:00Z","will_renew":true}"#.utf8)
 
         let response = try CodexUsageClient.decodeUsageResponse(data: usageData)
         let reset = try CodexUsageClient.decodeResetCredits(data: resetData)
+        let subscription = try CodexUsageClient.decodeSubscription(data: subscriptionData)
 
         #expect(response.planType == "pro")
         #expect(response.rateLimit?.primaryWindow?.usedPercent?.value == 25)
@@ -48,6 +50,7 @@ struct CodexUsageCoreTests {
         #expect(response.credits?.balance?.value == 12.5)
         #expect(reset.availableCount == 2)
         #expect(reset.nextExpiry != nil)
+        #expect(subscription.activeUntil?.value == Date(timeIntervalSince1970: 4070908800))
     }
 
     @Test func resolvesCodexBaseURLFromConfig() {

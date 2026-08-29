@@ -17,6 +17,14 @@ public final class CodexUsageClient {
         }
     }
 
+    struct SubscriptionResponse: Decodable {
+        let activeUntil: FlexibleDate?
+
+        enum CodingKeys: String, CodingKey {
+            case activeUntil = "active_until"
+        }
+    }
+
     struct RateLimitResponse: Decodable {
         let primaryWindow: WindowResponse?
         let secondaryWindow: WindowResponse?
@@ -148,12 +156,24 @@ public final class CodexUsageClient {
             resetCredits = try? Self.decodeResetCredits(data: resetData)
         }
 
+        var subscriptionExpiresAt: Date?
+        if let accountID = credentials.accountID,
+           !accountID.isEmpty,
+           let subscriptionData = try? await self.request(
+               url: Self.subscriptionURL(baseURL: baseURL, accountID: accountID),
+               credentials: credentials,
+               timeout: 8)
+        {
+            subscriptionExpiresAt = try? Self.decodeSubscription(data: subscriptionData).activeUntil?.value
+        }
+
         return CodexUsage(
             planType: usage.planType,
             primary: Self.window(from: usage.rateLimit?.primaryWindow),
             secondary: Self.window(from: usage.rateLimit?.secondaryWindow),
             credits: usage.credits?.balance?.value,
-            resetCredits: resetCredits)
+            resetCredits: resetCredits,
+            subscriptionExpiresAt: subscriptionExpiresAt)
     }
 
     static func decodeUsageResponse(data: Data) throws -> UsageResponse {
@@ -174,6 +194,21 @@ public final class CodexUsageClient {
         } catch {
             throw CodexUsageError.invalidResponse
         }
+    }
+
+    static func decodeSubscription(data: Data) throws -> SubscriptionResponse {
+        do {
+            return try JSONDecoder().decode(SubscriptionResponse.self, from: data)
+        } catch {
+            throw CodexUsageError.invalidResponse
+        }
+    }
+
+    private static func subscriptionURL(baseURL: URL, accountID: String) -> URL {
+        let url = baseURL.appendingPathComponent("subscriptions")
+        var components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        components?.queryItems = [URLQueryItem(name: "account_id", value: accountID)]
+        return components?.url ?? url
     }
 
     static func resolveBaseURL(homePath: String) -> URL {
