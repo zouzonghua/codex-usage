@@ -11,11 +11,17 @@ MainActor.assumeIsolated {
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
-    private static let appVersion = "0.1.0"
+    private static var appVersion: String {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.1.0"
+    }
+    private static var appReleaseVersion: String {
+        Bundle.main.object(forInfoDictionaryKey: "CodexUsageReleaseTag") as? String ?? Self.appVersion
+    }
     private static let automaticRefreshInterval: TimeInterval = 300
     private static let menuRefreshInterval: TimeInterval = 60
     private let accountStore = CodexAccountStore()
     private let usageClient = CodexUsageClient()
+    private let updateChecker = CodexUpdateChecker()
     private var statusItem: NSStatusItem!
     private var language = CodexLanguage.load()
     private var accounts: [CodexAccount] = []
@@ -25,6 +31,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var refreshTimer: Timer?
     private var clockTimer: Timer?
     private var refreshTask: Task<Void, Never>?
+    private var updateCheckTask: Task<Void, Never>?
     private var refreshRequestID: UUID?
     private var refreshingAccountID: String?
     private var loginProcesses: [String: Process] = [:]
@@ -79,6 +86,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         self.refreshTimer?.invalidate()
         self.clockTimer?.invalidate()
         self.refreshTask?.cancel()
+        self.updateCheckTask?.cancel()
     }
 
     func menuWillOpen(_ menu: NSMenu) {
@@ -141,6 +149,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let aboutItem = NSMenuItem(title: self.text.about, action: #selector(showAbout), keyEquivalent: "")
         aboutItem.target = self
         menu.addItem(aboutItem)
+
+        let updateItem = NSMenuItem(
+            title: self.text.checkForUpdates,
+            action: #selector(checkForUpdates),
+            keyEquivalent: "")
+        updateItem.target = self
+        menu.addItem(updateItem)
 
         menu.addItem(.separator())
         let quitItem = NSMenuItem(title: self.text.quit, action: #selector(quit), keyEquivalent: "q")
@@ -426,6 +441,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             .applicationVersion: Self.appVersion,
             .credits: NSAttributedString(string: self.text.aboutDescription),
         ])
+    }
+
+    @objc private func checkForUpdates() {
+        self.updateCheckTask?.cancel()
+        self.updateCheckTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                let update = try await self.updateChecker.check(currentVersion: Self.appReleaseVersion)
+                guard !Task.isCancelled else { return }
+                self.showUpdateResult(update)
+            } catch is CancellationError {
+                return
+            } catch {
+                guard !Task.isCancelled else { return }
+                self.showAlert(title: self.text.updateCheckFailed, message: self.text.updateErrorMessage(error))
+            }
+        }
+    }
+
+    private func showUpdateResult(_ update: CodexUpdateInfo) {
+        let alert = NSAlert()
+        if update.isUpdateAvailable {
+            alert.messageText = self.text.updateAvailable
+            alert.informativeText = self.text.updateAvailableMessage(update.latestVersion)
+            alert.addButton(withTitle: self.text.openRelease)
+            alert.addButton(withTitle: self.text.ok)
+            if alert.runModal() == .alertFirstButtonReturn {
+                NSWorkspace.shared.open(update.releaseURL)
+            }
+        } else {
+            self.showAlert(
+                title: self.text.upToDate,
+                message: self.text.upToDateMessage(Self.appReleaseVersion))
+        }
     }
 
     private func updateStatusIcon() {

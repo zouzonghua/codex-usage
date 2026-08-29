@@ -52,6 +52,26 @@ struct AppText {
         self.value("退出", "Quit")
     }
 
+    var checkForUpdates: String {
+        self.value("检查更新…", "Check for Updates…")
+    }
+
+    var updateAvailable: String {
+        self.value("发现新版本", "Update Available")
+    }
+
+    var upToDate: String {
+        self.value("已是最新版本", "You're Up to Date")
+    }
+
+    var openRelease: String {
+        self.value("打开下载页面", "Open Download Page")
+    }
+
+    var updateCheckFailed: String {
+        self.value("检查更新失败", "Update Check Failed")
+    }
+
     var currentAccount: String {
         self.value("当前 Codex 账号", "Current Codex account")
     }
@@ -171,6 +191,36 @@ struct AppText {
 
     func updated(_ date: Date) -> String {
         "\(self.updated)：\(self.time(date))"
+    }
+
+    func updateAvailableMessage(_ version: String) -> String {
+        self.value(
+            "发现新版本 \(version)，是否打开下载页面？",
+            "Version \(version) is available. Open the download page?")
+    }
+
+    func upToDateMessage(_ version: String) -> String {
+        self.value(
+            "当前已是最新版本（\(version)）。",
+            "You're already using the latest version (\(version)).")
+    }
+
+    func updateErrorMessage(_ error: Error) -> String {
+        guard let error = error as? CodexUpdateError else {
+            return error.localizedDescription
+        }
+        switch error {
+        case .invalidResponse:
+            return self.value("更新信息格式无法识别。", "Unable to understand the update information.")
+        case .invalidVersion:
+            return self.value("当前版本号无法识别。", "Unable to identify the current version.")
+        case let .server(statusCode):
+            return self.value(
+                "更新服务返回错误（HTTP \(statusCode)）。",
+                "The update service returned an error (HTTP \(statusCode)).")
+        case let .network(message):
+            return self.value("网络请求失败：\(message)", "Network request failed: \(message)")
+        }
     }
 
     func errorMessage(_ error: Error) -> String {
