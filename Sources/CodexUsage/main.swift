@@ -111,6 +111,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 if let planType = usage.planType, !planType.isEmpty {
                     menu.addItem(self.infoItem(title: "\(self.text.plan)：\(planType)"))
                 }
+                menu.addItem(self.infoItem(title: self.text.subscriptionExpiry(usage.subscriptionExpiresAt)))
                 menu.addItem(.separator())
                 menu.addItem(self.infoItem(title: self.text.updated(usage.fetchedAt)))
             } else if let error = self.errorByAccount[account.id] {

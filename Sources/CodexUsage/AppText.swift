@@ -80,6 +80,10 @@ struct AppText {
         self.value("套餐", "Plan")
     }
 
+    var subscriptionExpiryUnknown: String {
+        self.value("订阅到期：未知", "Subscription expiry: unknown")
+    }
+
     var updated: String {
         self.value("更新时间", "Updated")
     }
@@ -156,6 +160,13 @@ struct AppText {
         return self.value(
             "重置额度：\(summary.availableCount) 个可用 · \(expiry)",
             "Reset credits: \(summary.availableCount) available · \(expiry)")
+    }
+
+    func subscriptionExpiry(_ date: Date?) -> String {
+        guard let date else { return self.subscriptionExpiryUnknown }
+        return self.value(
+            "订阅到期：\(self.date(date)) · \(self.expiryDescription(date))",
+            "Subscription expires: \(self.date(date)) · \(self.expiryDescription(date))")
     }
 
     func updated(_ date: Date) -> String {
@@ -243,6 +254,13 @@ struct AppText {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: self.language == .english ? "en_US" : "zh_CN")
         formatter.dateFormat = "M/d HH:mm"
+        return formatter.string(from: date)
+    }
+
+    private func date(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: self.language == .english ? "en_US" : "zh_CN")
+        formatter.dateFormat = "yyyy/M/d"
         return formatter.string(from: date)
     }
 
