@@ -1,6 +1,27 @@
 import AppKit
 import CodexUsageCore
 
+private struct CachedResetCredits: Codable, Sendable {
+    let availableCount: Int
+    let nextExpiry: Date?
+
+    init(_ summary: CodexResetCreditSummary) {
+        self.availableCount = summary.availableCount
+        self.nextExpiry = summary.nextExpiry
+    }
+
+    var summary: CodexResetCreditSummary {
+        CodexResetCreditSummary(availableCount: self.availableCount, nextExpiry: self.nextExpiry)
+    }
+}
+
+private struct DailyUsageCache: Codable, Sendable {
+    var resetCredits: CachedResetCredits?
+    var subscriptionExpiresAt: Date?
+    var lastResetCreditsAttemptAt: Date?
+    var lastSubscriptionAttemptAt: Date?
+}
+
 MainActor.assumeIsolated {
     let application = NSApplication.shared
     let delegate = AppDelegate()
@@ -11,20 +32,31 @@ MainActor.assumeIsolated {
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
-    private static let appVersion = "0.1.0"
+    private static var appVersion: String {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.1.0"
+    }
+    private static var appReleaseVersion: String {
+        Bundle.main.object(forInfoDictionaryKey: "CodexUsageReleaseTag") as? String ?? Self.appVersion
+    }
     private static let automaticRefreshInterval: TimeInterval = 300
-    private static let menuRefreshInterval: TimeInterval = 60
+    private static let menuRefreshInterval: TimeInterval = 300
+    private static let resetCreditsRefreshInterval: TimeInterval = 10 * 60
+    private static let subscriptionRefreshInterval: TimeInterval = 24 * 60 * 60
+    private static let dailyDataCacheKey = "dailyUsageCache"
     private let accountStore = CodexAccountStore()
     private let usageClient = CodexUsageClient()
+    private let updateChecker = CodexUpdateChecker()
     private var statusItem: NSStatusItem!
     private var language = CodexLanguage.load()
     private var accounts: [CodexAccount] = []
     private var selectedAccountID: String?
     private var usageByAccount: [String: CodexUsage] = [:]
+    private var dailyUsageCacheByAccount: [String: DailyUsageCache] = [:]
     private var errorByAccount: [String: CodexUsageError] = [:]
     private var refreshTimer: Timer?
     private var clockTimer: Timer?
     private var refreshTask: Task<Void, Never>?
+    private var updateCheckTask: Task<Void, Never>?
     private var refreshRequestID: UUID?
     private var refreshingAccountID: String?
     private var loginProcesses: [String: Process] = [:]
@@ -51,6 +83,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         self.statusItem.button?.setAccessibilityTitle(self.text.statusAccessibilityTitle)
 
         self.accounts = self.accountStore.loadAccounts()
+        self.dailyUsageCacheByAccount = Self.loadDailyUsageCache()
         let savedSelection = UserDefaults.standard.string(forKey: "selectedAccountID")
         self.selectedAccountID = self.accounts.contains { $0.id == savedSelection }
             ? savedSelection
@@ -79,6 +112,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         self.refreshTimer?.invalidate()
         self.clockTimer?.invalidate()
         self.refreshTask?.cancel()
+        self.updateCheckTask?.cancel()
     }
 
     func menuWillOpen(_ menu: NSMenu) {
@@ -141,6 +175,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let aboutItem = NSMenuItem(title: self.text.about, action: #selector(showAbout), keyEquivalent: "")
         aboutItem.target = self
         menu.addItem(aboutItem)
+
+        let updateItem = NSMenuItem(
+            title: self.text.checkForUpdates,
+            action: #selector(checkForUpdates),
+            keyEquivalent: "")
+        updateItem.target = self
+        menu.addItem(updateItem)
 
         menu.addItem(.separator())
         let quitItem = NSMenuItem(title: self.text.quit, action: #selector(quit), keyEquivalent: "q")
@@ -299,15 +340,47 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let accountID = account.id
             let client = self.usageClient
             let homePath = account.homePath
+            let cacheKey = Self.dailyCacheKey(fallbackID: accountID, credentials: credentials)
+            let cachedDailyData = self.dailyUsageCacheByAccount[cacheKey]
+            let refreshResetCredits = self.shouldRefreshResetCredits(cachedDailyData)
+            let refreshSubscription = self.shouldRefreshSubscription(cachedDailyData)
+            let refreshAdditionalData = refreshResetCredits || refreshSubscription
             self.refreshTask = Task {
                 do {
-                    let usage = try await client.fetch(credentials: credentials, homePath: homePath)
+                    let usage = try await client.fetchUsage(credentials: credentials, homePath: homePath)
+                    let dailyData: DailyUsageCache
+                    if refreshAdditionalData {
+                        let attemptData = Self.markRefreshAttempts(
+                            cachedDailyData,
+                            resetCredits: refreshResetCredits,
+                            subscription: refreshSubscription)
+                        self.dailyUsageCacheByAccount[cacheKey] = attemptData
+                        self.saveDailyUsageCache()
+                        dailyData = try await self.refreshAdditionalData(
+                            cached: attemptData,
+                            refreshResetCredits: refreshResetCredits,
+                            refreshSubscription: refreshSubscription,
+                            client: client,
+                            credentials: credentials,
+                            homePath: homePath)
+                    } else {
+                        dailyData = cachedDailyData ?? DailyUsageCache(
+                            resetCredits: nil,
+                            subscriptionExpiresAt: nil,
+                            lastResetCreditsAttemptAt: nil,
+                            lastSubscriptionAttemptAt: nil)
+                    }
+                    if refreshAdditionalData {
+                        self.dailyUsageCacheByAccount[cacheKey] = dailyData
+                        self.saveDailyUsageCache()
+                    }
+                    let mergedUsage = Self.merge(usage: usage, dailyData: dailyData)
                     DispatchQueue.main.async { [weak self] in
                         guard let self,
                               self.selectedAccountID == accountID,
                               self.refreshRequestID == requestID
                         else { return }
-                        self.usageByAccount[accountID] = usage
+                        self.usageByAccount[accountID] = mergedUsage
                         self.errorByAccount[accountID] = nil
                         self.refreshingAccountID = nil
                         self.refreshTask = nil
@@ -353,6 +426,101 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         self.refreshTask = nil
         self.refreshRequestID = nil
         self.refreshingAccountID = nil
+    }
+
+    private func shouldRefreshResetCredits(_ cache: DailyUsageCache?) -> Bool {
+        guard let lastAttemptAt = cache?.lastResetCreditsAttemptAt else { return true }
+        return Date().timeIntervalSince(lastAttemptAt) >= Self.resetCreditsRefreshInterval
+    }
+
+    private func shouldRefreshSubscription(_ cache: DailyUsageCache?) -> Bool {
+        guard let lastAttemptAt = cache?.lastSubscriptionAttemptAt else { return true }
+        return Date().timeIntervalSince(lastAttemptAt) >= Self.subscriptionRefreshInterval
+    }
+
+    private static func markRefreshAttempts(
+        _ cache: DailyUsageCache?,
+        resetCredits: Bool,
+        subscription: Bool) -> DailyUsageCache
+    {
+        var cache = cache ?? DailyUsageCache(
+            resetCredits: nil,
+            subscriptionExpiresAt: nil,
+            lastResetCreditsAttemptAt: nil,
+            lastSubscriptionAttemptAt: nil)
+        let now = Date()
+        if resetCredits {
+            cache.lastResetCreditsAttemptAt = now
+        }
+        if subscription {
+            cache.lastSubscriptionAttemptAt = now
+        }
+        return cache
+    }
+
+    private func refreshAdditionalData(
+        cached: DailyUsageCache,
+        refreshResetCredits: Bool,
+        refreshSubscription: Bool,
+        client: CodexUsageClient,
+        credentials: CodexCredentials,
+        homePath: String) async throws -> DailyUsageCache
+    {
+        var cache = cached
+
+        if refreshResetCredits {
+            do {
+                cache.resetCredits = CachedResetCredits(
+                    try await client.fetchResetCredits(credentials: credentials, homePath: homePath))
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                // Keep the last successful value when the endpoint is unavailable.
+            }
+        }
+
+        if refreshSubscription {
+            do {
+                cache.subscriptionExpiresAt = try await client.fetchSubscriptionExpiry(
+                    credentials: credentials,
+                    homePath: homePath)
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                // Keep the last successful value when the endpoint is unavailable.
+            }
+        }
+        return cache
+    }
+
+    private static func merge(usage: CodexUsage, dailyData: DailyUsageCache) -> CodexUsage {
+        CodexUsage(
+            planType: usage.planType,
+            primary: usage.primary,
+            secondary: usage.secondary,
+            credits: usage.credits,
+            resetCredits: dailyData.resetCredits?.summary,
+            fetchedAt: usage.fetchedAt,
+            subscriptionExpiresAt: dailyData.subscriptionExpiresAt)
+    }
+
+    private static func dailyCacheKey(fallbackID: String, credentials: CodexCredentials) -> String {
+        guard let accountID = credentials.accountID?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !accountID.isEmpty
+        else { return "fallback:\(fallbackID)" }
+        return "account:\(accountID)"
+    }
+
+    private static func loadDailyUsageCache() -> [String: DailyUsageCache] {
+        guard let data = UserDefaults.standard.data(forKey: Self.dailyDataCacheKey),
+              let cache = try? JSONDecoder().decode([String: DailyUsageCache].self, from: data)
+        else { return [:] }
+        return cache
+    }
+
+    private func saveDailyUsageCache() {
+        guard let data = try? JSONEncoder().encode(self.dailyUsageCacheByAccount) else { return }
+        UserDefaults.standard.set(data, forKey: Self.dailyDataCacheKey)
     }
 
     @objc private func addAccount() {
@@ -423,9 +591,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         NSApp.activate(ignoringOtherApps: true)
         NSApp.orderFrontStandardAboutPanel(options: [
             .applicationName: "CodexUsage",
-            .applicationVersion: Self.appVersion,
+            .applicationVersion: Self.appReleaseVersion,
             .credits: NSAttributedString(string: self.text.aboutDescription),
         ])
+    }
+
+    @objc private func checkForUpdates() {
+        self.updateCheckTask?.cancel()
+        self.updateCheckTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                let update = try await self.updateChecker.check(currentVersion: Self.appReleaseVersion)
+                guard !Task.isCancelled else { return }
+                self.showUpdateResult(update)
+            } catch is CancellationError {
+                return
+            } catch {
+                guard !Task.isCancelled else { return }
+                self.showAlert(title: self.text.updateCheckFailed, message: self.text.updateErrorMessage(error))
+            }
+        }
+    }
+
+    private func showUpdateResult(_ update: CodexUpdateInfo) {
+        let alert = NSAlert()
+        if update.isUpdateAvailable {
+            alert.messageText = self.text.updateAvailable
+            alert.informativeText = self.text.updateAvailableMessage(update.latestVersion)
+            alert.addButton(withTitle: self.text.openRelease)
+            alert.addButton(withTitle: self.text.ok)
+            if alert.runModal() == .alertFirstButtonReturn {
+                NSWorkspace.shared.open(update.releaseURL)
+            }
+        } else {
+            self.showAlert(
+                title: self.text.upToDate,
+                message: self.text.upToDateMessage(Self.appReleaseVersion))
+        }
     }
 
     private func updateStatusIcon() {

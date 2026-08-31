@@ -47,6 +47,10 @@ rm -f "$app_dir/Contents/Resources/Assets.car"
 if [[ -n "$marketing_version" ]]; then
     /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $marketing_version" "$app_dir/Contents/Info.plist"
 fi
+if [[ "$artifact_label" == v* ]]; then
+    /usr/libexec/PlistBuddy -c "Add :CodexUsageReleaseTag string $artifact_label" "$app_dir/Contents/Info.plist" 2>/dev/null || \
+        /usr/libexec/PlistBuddy -c "Set :CodexUsageReleaseTag $artifact_label" "$app_dir/Contents/Info.plist"
+fi
 /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $build_number" "$app_dir/Contents/Info.plist"
 codesign --force --deep --sign - "$app_dir" >/dev/null
 codesign --verify --deep --strict --verbose=1 "$app_dir" >/dev/null

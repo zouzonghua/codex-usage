@@ -61,6 +61,13 @@ struct CodexUsageCoreTests {
                 == "https://example.com/api")
     }
 
+    @Test func comparesReleaseVersions() {
+        #expect(CodexUpdateChecker.Version("v0.2.0")! > CodexUpdateChecker.Version("0.1.0")!)
+        #expect(CodexUpdateChecker.Version("0.1.0-beta.10")! > CodexUpdateChecker.Version("0.1.0-beta.9")!)
+        #expect(CodexUpdateChecker.Version("0.1.0-rc.1")! > CodexUpdateChecker.Version("0.1.0-beta.10")!)
+        #expect(CodexUpdateChecker.Version("v0.1.0-beta.9")! < CodexUpdateChecker.Version("0.1.0")!)
+    }
+
     @Test func switchingAccountPreservesThePreviousSystemAccount() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("CodexUsageTests-\(UUID().uuidString)", isDirectory: true)
