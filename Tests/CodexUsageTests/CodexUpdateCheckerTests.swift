@@ -11,7 +11,7 @@ struct CodexUpdateCheckerTests {
 
         StubURLProtocol.configure(
             statusCode: 200,
-            data: Data(#"{"tag_name":"v0.2.0","html_url":"https://github.com/zouzonghua/codex-usage/releases/tag/v0.2.0"}"#.utf8))
+            data: Data(#"[{"tag_name":"v0.2.0","html_url":"https://github.com/zouzonghua/codex-usage/releases/tag/v0.2.0","prerelease":false}]"#.utf8))
         let update = try await checker.check(currentVersion: "v0.1.0-beta.9")
         #expect(update.isUpdateAvailable)
         #expect(update.latestVersion == "v0.2.0")
@@ -22,10 +22,32 @@ struct CodexUpdateCheckerTests {
         let checker = Self.makeChecker()
         StubURLProtocol.configure(
             statusCode: 200,
-            data: Data(#"{"tag_name":"v0.2.0","html_url":"https://github.com/zouzonghua/codex-usage/releases/tag/v0.2.0"}"#.utf8))
+            data: Data(#"[{"tag_name":"v0.2.0","html_url":"https://github.com/zouzonghua/codex-usage/releases/tag/v0.2.0","prerelease":false}]"#.utf8))
 
         let update = try await checker.check(currentVersion: "0.2.0")
         #expect(!update.isUpdateAvailable)
+    }
+
+    @Test func checksLatestBetaRelease() async throws {
+        let checker = Self.makeChecker()
+        StubURLProtocol.configure(
+            statusCode: 200,
+            data: Data(#"[{"tag_name":"v0.1.0-beta.9","html_url":"https://github.com/zouzonghua/codex-usage/releases/tag/v0.1.0-beta.9","prerelease":true}]"#.utf8))
+
+        let update = try await checker.check(currentVersion: "v0.1.0-beta.8")
+        #expect(update.isUpdateAvailable)
+        #expect(update.latestVersion == "v0.1.0-beta.9")
+    }
+
+    @Test func stableReleaseIsNewerThanPrerelease() async throws {
+        let checker = Self.makeChecker()
+        StubURLProtocol.configure(
+            statusCode: 200,
+            data: Data(#"[{"tag_name":"v0.1.0-beta.9","html_url":"https://github.com/zouzonghua/codex-usage/releases/tag/v0.1.0-beta.9","prerelease":true},{"tag_name":"v0.1.0","html_url":"https://github.com/zouzonghua/codex-usage/releases/tag/v0.1.0","prerelease":false}]"#.utf8))
+
+        let update = try await checker.check(currentVersion: "v0.1.0-beta.9")
+        #expect(update.isUpdateAvailable)
+        #expect(update.latestVersion == "v0.1.0")
     }
 
     @Test func rejectsMalformedReleaseResponse() async throws {

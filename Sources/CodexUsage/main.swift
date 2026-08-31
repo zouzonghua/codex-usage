@@ -18,7 +18,8 @@ private struct CachedResetCredits: Codable, Sendable {
 private struct DailyUsageCache: Codable, Sendable {
     var resetCredits: CachedResetCredits?
     var subscriptionExpiresAt: Date?
-    var lastAttemptAt: Date?
+    var lastResetCreditsAttemptAt: Date?
+    var lastSubscriptionAttemptAt: Date?
 }
 
 MainActor.assumeIsolated {
@@ -39,7 +40,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
     private static let automaticRefreshInterval: TimeInterval = 300
     private static let menuRefreshInterval: TimeInterval = 300
-    private static let dailyDataRefreshInterval: TimeInterval = 24 * 60 * 60
+    private static let resetCreditsRefreshInterval: TimeInterval = 10 * 60
+    private static let subscriptionRefreshInterval: TimeInterval = 24 * 60 * 60
     private static let dailyDataCacheKey = "dailyUsageCache"
     private let accountStore = CodexAccountStore()
     private let usageClient = CodexUsageClient()
@@ -340,17 +342,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let homePath = account.homePath
             let cacheKey = Self.dailyCacheKey(fallbackID: accountID, credentials: credentials)
             let cachedDailyData = self.dailyUsageCacheByAccount[cacheKey]
-            let refreshDailyData = self.shouldRefreshDailyData(cachedDailyData)
+            let refreshResetCredits = self.shouldRefreshResetCredits(cachedDailyData)
+            let refreshSubscription = self.shouldRefreshSubscription(cachedDailyData)
+            let refreshAdditionalData = refreshResetCredits || refreshSubscription
             self.refreshTask = Task {
                 do {
                     let usage = try await client.fetchUsage(credentials: credentials, homePath: homePath)
                     let dailyData: DailyUsageCache
-                    if refreshDailyData {
-                        let attemptData = Self.markDailyAttempt(cachedDailyData)
+                    if refreshAdditionalData {
+                        let attemptData = Self.markRefreshAttempts(
+                            cachedDailyData,
+                            resetCredits: refreshResetCredits,
+                            subscription: refreshSubscription)
                         self.dailyUsageCacheByAccount[cacheKey] = attemptData
                         self.saveDailyUsageCache()
-                        dailyData = try await self.refreshDailyData(
+                        dailyData = try await self.refreshAdditionalData(
                             cached: attemptData,
+                            refreshResetCredits: refreshResetCredits,
+                            refreshSubscription: refreshSubscription,
                             client: client,
                             credentials: credentials,
                             homePath: homePath)
@@ -358,9 +367,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                         dailyData = cachedDailyData ?? DailyUsageCache(
                             resetCredits: nil,
                             subscriptionExpiresAt: nil,
-                            lastAttemptAt: nil)
+                            lastResetCreditsAttemptAt: nil,
+                            lastSubscriptionAttemptAt: nil)
                     }
-                    if refreshDailyData {
+                    if refreshAdditionalData {
                         self.dailyUsageCacheByAccount[cacheKey] = dailyData
                         self.saveDailyUsageCache()
                     }
@@ -418,45 +428,67 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         self.refreshingAccountID = nil
     }
 
-    private func shouldRefreshDailyData(_ cache: DailyUsageCache?) -> Bool {
-        guard let lastAttemptAt = cache?.lastAttemptAt else { return true }
-        return Date().timeIntervalSince(lastAttemptAt) >= Self.dailyDataRefreshInterval
+    private func shouldRefreshResetCredits(_ cache: DailyUsageCache?) -> Bool {
+        guard let lastAttemptAt = cache?.lastResetCreditsAttemptAt else { return true }
+        return Date().timeIntervalSince(lastAttemptAt) >= Self.resetCreditsRefreshInterval
     }
 
-    private static func markDailyAttempt(_ cache: DailyUsageCache?) -> DailyUsageCache {
+    private func shouldRefreshSubscription(_ cache: DailyUsageCache?) -> Bool {
+        guard let lastAttemptAt = cache?.lastSubscriptionAttemptAt else { return true }
+        return Date().timeIntervalSince(lastAttemptAt) >= Self.subscriptionRefreshInterval
+    }
+
+    private static func markRefreshAttempts(
+        _ cache: DailyUsageCache?,
+        resetCredits: Bool,
+        subscription: Bool) -> DailyUsageCache
+    {
         var cache = cache ?? DailyUsageCache(
             resetCredits: nil,
             subscriptionExpiresAt: nil,
-            lastAttemptAt: nil)
-        cache.lastAttemptAt = Date()
+            lastResetCreditsAttemptAt: nil,
+            lastSubscriptionAttemptAt: nil)
+        let now = Date()
+        if resetCredits {
+            cache.lastResetCreditsAttemptAt = now
+        }
+        if subscription {
+            cache.lastSubscriptionAttemptAt = now
+        }
         return cache
     }
 
-    private func refreshDailyData(
+    private func refreshAdditionalData(
         cached: DailyUsageCache,
+        refreshResetCredits: Bool,
+        refreshSubscription: Bool,
         client: CodexUsageClient,
         credentials: CodexCredentials,
         homePath: String) async throws -> DailyUsageCache
     {
         var cache = cached
 
-        do {
-            cache.resetCredits = CachedResetCredits(
-                try await client.fetchResetCredits(credentials: credentials, homePath: homePath))
-        } catch is CancellationError {
-            throw CancellationError()
-        } catch {
-            // Keep the last successful value when the endpoint is unavailable.
+        if refreshResetCredits {
+            do {
+                cache.resetCredits = CachedResetCredits(
+                    try await client.fetchResetCredits(credentials: credentials, homePath: homePath))
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                // Keep the last successful value when the endpoint is unavailable.
+            }
         }
 
-        do {
-            cache.subscriptionExpiresAt = try await client.fetchSubscriptionExpiry(
-                credentials: credentials,
-                homePath: homePath)
-        } catch is CancellationError {
-            throw CancellationError()
-        } catch {
-            // Keep the last successful value when the endpoint is unavailable.
+        if refreshSubscription {
+            do {
+                cache.subscriptionExpiresAt = try await client.fetchSubscriptionExpiry(
+                    credentials: credentials,
+                    homePath: homePath)
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                // Keep the last successful value when the endpoint is unavailable.
+            }
         }
         return cache
     }
