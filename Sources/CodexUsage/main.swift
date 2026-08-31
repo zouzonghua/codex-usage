@@ -591,7 +591,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         NSApp.activate(ignoringOtherApps: true)
         NSApp.orderFrontStandardAboutPanel(options: [
             .applicationName: "CodexUsage",
-            .applicationVersion: Self.appVersion,
+            .applicationVersion: Self.appReleaseVersion,
             .credits: NSAttributedString(string: self.text.aboutDescription),
         ])
     }
