@@ -4,7 +4,7 @@ import Foundation
 import FoundationNetworking
 #endif
 
-public final class CodexUsageClient {
+public struct CodexUsageClient: Sendable {
     struct UsageResponse: Decodable {
         let planType: String?
         let rateLimit: RateLimitResponse?
@@ -138,7 +138,7 @@ public final class CodexUsageClient {
         self.baseURLOverride = baseURL
     }
 
-    public func fetch(credentials: CodexCredentials, homePath: String) async throws -> CodexUsage {
+    public func fetchUsage(credentials: CodexCredentials, homePath: String) async throws -> CodexUsage {
         let baseURL = self.baseURLOverride ?? Self.resolveBaseURL(homePath: homePath)
         let usagePath = baseURL.path.contains("/backend-api") ? "wham/usage" : "api/codex/usage"
         let usageData = try await self.request(
@@ -147,33 +147,39 @@ public final class CodexUsageClient {
             timeout: 20)
         let usage = try Self.decodeUsageResponse(data: usageData)
 
-        var resetCredits: CodexResetCreditSummary?
-        if let resetData = try? await self.request(
-            url: baseURL.appendingPathComponent("wham/rate-limit-reset-credits"),
-            credentials: credentials,
-            timeout: 8)
-        {
-            resetCredits = try? Self.decodeResetCredits(data: resetData)
-        }
-
-        var subscriptionExpiresAt: Date?
-        if let accountID = credentials.accountID,
-           !accountID.isEmpty,
-           let subscriptionData = try? await self.request(
-               url: Self.subscriptionURL(baseURL: baseURL, accountID: accountID),
-               credentials: credentials,
-               timeout: 8)
-        {
-            subscriptionExpiresAt = try? Self.decodeSubscription(data: subscriptionData).activeUntil?.value
-        }
-
         return CodexUsage(
             planType: usage.planType,
             primary: Self.window(from: usage.rateLimit?.primaryWindow),
             secondary: Self.window(from: usage.rateLimit?.secondaryWindow),
             credits: usage.credits?.balance?.value,
-            resetCredits: resetCredits,
-            subscriptionExpiresAt: subscriptionExpiresAt)
+            resetCredits: nil)
+    }
+
+    public func fetchResetCredits(
+        credentials: CodexCredentials,
+        homePath: String) async throws -> CodexResetCreditSummary
+    {
+        let baseURL = self.baseURLOverride ?? Self.resolveBaseURL(homePath: homePath)
+        let resetData = try await self.request(
+            url: baseURL.appendingPathComponent("wham/rate-limit-reset-credits"),
+            credentials: credentials,
+            timeout: 8)
+        return try Self.decodeResetCredits(data: resetData)
+    }
+
+    public func fetchSubscriptionExpiry(credentials: CodexCredentials, homePath: String) async throws -> Date {
+        guard let accountID = credentials.accountID, !accountID.isEmpty else {
+            throw CodexUsageError.invalidAuth
+        }
+        let baseURL = self.baseURLOverride ?? Self.resolveBaseURL(homePath: homePath)
+        let subscriptionData = try await self.request(
+            url: Self.subscriptionURL(baseURL: baseURL, accountID: accountID),
+            credentials: credentials,
+            timeout: 8)
+        guard let expiresAt = try Self.decodeSubscription(data: subscriptionData).activeUntil?.value else {
+            throw CodexUsageError.invalidResponse
+        }
+        return expiresAt
     }
 
     static func decodeUsageResponse(data: Data) throws -> UsageResponse {
@@ -272,6 +278,8 @@ public final class CodexUsageClient {
             throw error
         } catch is CancellationError {
             throw CancellationError()
+        } catch let error as URLError where error.code == .cancelled {
+            throw CancellationError()
         } catch {
             throw CodexUsageError.network(error.localizedDescription)
         }
@@ -288,4 +296,5 @@ public final class CodexUsageClient {
         }
         return CodexRateWindow(usedPercent: response.usedPercent?.value ?? 0, resetAt: resetAt)
     }
+
 }
