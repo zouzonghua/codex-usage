@@ -104,6 +104,52 @@ struct CodexUsageCoreTests {
             .replacingOccurrences(of: "=", with: "")
     }
 
+    @Test func switchingAwayUpdatesAnExistingBackup() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = CodexAccountStore(
+            applicationSupportURL: root.appendingPathComponent("support"),
+            environment: ["CODEX_HOME": root.appendingPathComponent("system").path])
+        try FileManager.default.createDirectory(at: store.systemHomeURL, withIntermediateDirectories: true)
+        let firstHome = try store.createManagedHome()
+        let oldData = try Self.authData(email: "first@example.com", accountID: "first")
+        try oldData.write(to: firstHome.appendingPathComponent("auth.json"))
+        _ = try store.registerManagedAccount(at: firstHome)
+        var renewed = try #require(JSONSerialization.jsonObject(with: oldData) as? [String: Any])
+        var tokens = try #require(renewed["tokens"] as? [String: String])
+        tokens["access_token"] = "renewed-token"
+        renewed["tokens"] = tokens
+        let renewedData = try JSONSerialization.data(withJSONObject: renewed)
+        try renewedData.write(to: store.systemHomeURL.appendingPathComponent("auth.json"))
+        let secondHome = try store.createManagedHome()
+        try Self.authData(email: "second@example.com", accountID: "second")
+            .write(to: secondHome.appendingPathComponent("auth.json"))
+        let second = try store.registerManagedAccount(at: secondHome)
+
+        try store.activate(second)
+        let first = try #require(store.loadAccounts().first { $0.accountID == "first" })
+        #expect(try store.credentials(for: first).accessToken == "renewed-token")
+        try store.activate(first)
+        #expect(try Data(contentsOf: store.systemHomeURL.appendingPathComponent("auth.json")) == renewedData)
+    }
+
+    @Test func registeringCurrentIdentityReturnsASelectableAccount() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = CodexAccountStore(
+            applicationSupportURL: root.appendingPathComponent("support"),
+            environment: ["CODEX_HOME": root.appendingPathComponent("system").path])
+        try FileManager.default.createDirectory(at: store.systemHomeURL, withIntermediateDirectories: true)
+        let data = try Self.authData(email: "first@example.com", accountID: "first")
+        try data.write(to: store.systemHomeURL.appendingPathComponent("auth.json"))
+        let home = try store.createManagedHome()
+        try data.write(to: home.appendingPathComponent("auth.json"))
+
+        let registered = try store.registerManagedAccount(at: home)
+
+        #expect(store.loadAccounts().contains { $0.id == registered.id })
+    }
+
     private static func authData(email: String, accountID: String) throws -> Data {
         let payload = "{\"email\":\"\(email)\","
             + "\"https://api.openai.com/auth\":{\"chatgpt_account_id\":\"\(accountID)\"}}"
