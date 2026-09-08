@@ -139,6 +139,7 @@ public struct CodexUsageClient: Sendable {
     }
 
     public func fetchUsage(credentials: CodexCredentials, homePath: String) async throws -> CodexUsage {
+        guard !credentials.isAPIKey else { throw CodexUsageError.unsupportedAuth }
         let baseURL = self.baseURLOverride ?? Self.resolveBaseURL(homePath: homePath)
         let usagePath = baseURL.path.contains("/backend-api") ? "wham/usage" : "api/codex/usage"
         let usageData = try await self.request(
@@ -269,8 +270,10 @@ public struct CodexUsageClient: Sendable {
             switch httpResponse.statusCode {
             case 200...299:
                 return data
-            case 401, 403:
+            case 401:
                 throw CodexUsageError.unauthorized
+            case 403:
+                throw CodexUsageError.forbidden
             default:
                 throw CodexUsageError.server(httpResponse.statusCode)
             }
