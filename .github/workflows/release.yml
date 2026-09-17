@@ -1,0 +1,179 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  # 步骤 1: 运行 Release Please 自动管理正式版本的 Release PR
+  # 当 Release PR 被手动批准合并时，Release Please 会自动打上正式 tag (vX.Y.Z)
+  release-please:
+    name: Release Please PR
+    runs-on: ubuntu-latest
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
+      version: ${{ steps.release.outputs.version }}
+    steps:
+      - uses: googleapis/release-please-action@v4
+        id: release
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+  # 步骤 2: 当正式版本被发布时（Release PR 被合并），构建并打包正式版本 DMG 资产
+  build-stable:
+    name: Build stable release assets
+    needs: release-please
+    if: needs.release-please.outputs.release_created == 'true'
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Show toolchain
+        run: |
+          sw_vers
+          swift --version
+
+      - name: Run tests
+        run: swift test
+
+      - name: Build release binary
+        run: swift build -c release
+
+      - name: Package DMG
+        env:
+          BUILD_NUMBER: ${{ github.run_number }}
+          ARTIFACT_LABEL: ${{ needs.release-please.outputs.tag_name }}
+          MARKETING_VERSION: ${{ needs.release-please.outputs.version }}
+          BIN_DIR: ${{ github.workspace }}/.build/arm64-apple-macosx/release
+        run: ./Scripts/package_app.sh
+
+      - name: Generate and verify SHA256
+        env:
+          RELEASE_TAG: ${{ needs.release-please.outputs.tag_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          dmg="CodexUsage-${RELEASE_TAG}.dmg"
+          (
+            cd dist
+            shasum -a 256 "$dmg" > "$dmg.sha256"
+            shasum -a 256 -c "$dmg.sha256"
+          )
+
+      - name: Upload Release Assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.release-please.outputs.tag_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release upload "$RELEASE_TAG" \
+            "dist/CodexUsage-${RELEASE_TAG}.dmg" \
+            "dist/CodexUsage-${RELEASE_TAG}.dmg.sha256" \
+            --clobber
+
+  # 步骤 3: 只要本次不是正式 Release，就根据本次 commit 计算出 Beta tag，打 Tag 并发布 Pre-release
+  build-beta:
+    name: Build beta release
+    needs: release-please
+    if: needs.release-please.outputs.release_created != 'true'
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve beta version
+        id: beta
+        env:
+          BETA_NUMBER: ${{ github.run_number }}
+        shell: bash
+        run: ./Scripts/resolve_beta_version.sh "$BETA_NUMBER"
+
+      - name: Show toolchain
+        if: steps.beta.outputs.skip != 'true'
+        run: |
+          sw_vers
+          swift --version
+
+      - name: Run tests
+        if: steps.beta.outputs.skip != 'true'
+        run: swift test
+
+      - name: Build release binary
+        if: steps.beta.outputs.skip != 'true'
+        run: swift build -c release
+
+      - name: Package DMG
+        if: steps.beta.outputs.skip != 'true'
+        env:
+          BUILD_NUMBER: ${{ github.run_number }}
+          ARTIFACT_LABEL: ${{ steps.beta.outputs.tag }}
+          MARKETING_VERSION: ${{ steps.beta.outputs.marketing_version }}
+          BIN_DIR: ${{ github.workspace }}/.build/arm64-apple-macosx/release
+        run: ./Scripts/package_app.sh
+
+      - name: Generate and verify SHA256
+        if: steps.beta.outputs.skip != 'true'
+        env:
+          RELEASE_TAG: ${{ steps.beta.outputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          dmg="CodexUsage-${RELEASE_TAG}.dmg"
+          (
+            cd dist
+            shasum -a 256 "$dmg" > "$dmg.sha256"
+            shasum -a 256 -c "$dmg.sha256"
+          )
+
+      - name: Create Git tag
+        if: steps.beta.outputs.skip != 'true'
+        env:
+          RELEASE_TAG: ${{ steps.beta.outputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git rev-parse "$RELEASE_TAG" >/dev/null 2>&1; then
+            echo "Tag $RELEASE_TAG already exists."
+          else
+            git tag "$RELEASE_TAG" "$GITHUB_SHA"
+            git push origin "$RELEASE_TAG"
+          fi
+
+      - name: Create GitHub Beta Pre-release
+        if: steps.beta.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.beta.outputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          assets=(
+            "dist/CodexUsage-${RELEASE_TAG}.dmg"
+            "dist/CodexUsage-${RELEASE_TAG}.dmg.sha256"
+          )
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" "${assets[@]}" --clobber
+            exit 0
+          fi
+          gh release create "$RELEASE_TAG" \
+            --title "$RELEASE_TAG" \
+            --prerelease \
+            --generate-notes \
+            "${assets[@]}"

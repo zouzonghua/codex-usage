@@ -32,12 +32,33 @@ struct AppText {
         self.value("刷新", "Refresh")
     }
 
-    var switchAccount: String {
-        self.value("切换账号", "Switch account")
+    var viewAccountUsage: String {
+        self.value("查看账号额度", "View account usage")
+    }
+
+    var switchCodexAccount: String {
+        self.value("切换 Codex 账号", "Switch Codex account")
     }
 
     var addAccount: String {
         self.value("添加账号…", "Add account…")
+    }
+
+    var manageAccounts: String { self.value("管理账号", "Manage accounts") }
+    var relogin: String { self.value("重新登录…", "Log in again…") }
+    var deleteAccount: String { self.value("删除账号…", "Delete account…") }
+    var cancel: String { self.value("取消", "Cancel") }
+    var cancelLogin: String { self.value("取消登录", "Cancel login") }
+    var accountInUse: String { self.value("当前 Codex 使用中", "Currently used by Codex") }
+    var unableToManageAccount: String { self.value("账号操作失败", "Account operation failed") }
+    var loginInProgress: String { self.value("请在浏览器中完成登录，可在管理账号中取消。", "Complete login in your browser. You can cancel in Manage accounts.") }
+    var deleteAccountMessage: String {
+        self.value("将删除此应用保存的登录凭据和额度缓存。再次使用需要重新添加。",
+                   "This removes the saved credentials and usage cache from this app. Add the account again to use it later.")
+    }
+
+    func deleteAccountTitle(_ account: CodexAccount) -> String {
+        self.value("删除账号 \(self.accountName(account))？", "Delete account \(self.accountName(account))?")
     }
 
     var about: String {
@@ -46,6 +67,26 @@ struct AppText {
 
     var quit: String {
         self.value("退出", "Quit")
+    }
+
+    var checkForUpdates: String {
+        self.value("检查更新…", "Check for Updates…")
+    }
+
+    var updateAvailable: String {
+        self.value("发现新版本", "Update Available")
+    }
+
+    var upToDate: String {
+        self.value("已是最新版本", "You're Up to Date")
+    }
+
+    var openRelease: String {
+        self.value("打开下载页面", "Open Download Page")
+    }
+
+    var updateCheckFailed: String {
+        self.value("检查更新失败", "Update Check Failed")
     }
 
     var currentAccount: String {
@@ -76,14 +117,18 @@ struct AppText {
         self.value("套餐", "Plan")
     }
 
+    var subscriptionExpiryUnknown: String {
+        self.value("订阅到期：未知", "Subscription expiry: unknown")
+    }
+
     var updated: String {
         self.value("更新时间", "Updated")
     }
 
     var aboutDescription: String {
         self.value(
-            "查看 Codex 额度、重置额度和切换账号。",
-            "View Codex usage, reset credits, and switch accounts.")
+            "查看 Codex 额度、重置额度，以及查看或切换账号。",
+            "View Codex usage, reset credits, and view or switch accounts.")
     }
 
     var ok: String {
@@ -104,8 +149,8 @@ struct AppText {
 
     var addingAccountMessage: String {
         self.value(
-            "浏览器登录完成后，账号会自动出现在“切换账号”菜单中。",
-            "The account will appear in “Switch account” after browser login completes.")
+            "浏览器登录完成后，账号会自动出现在“切换 Codex 账号”菜单中。",
+            "The account will appear in “Switch Codex account” after browser login completes.")
     }
 
     var loginFailed: String {
@@ -118,6 +163,9 @@ struct AppText {
 
     func accountName(_ account: CodexAccount) -> String {
         if account.source == .system {
+            if !account.email.isEmpty {
+                return account.email
+            }
             return self.currentAccount
         }
         if !account.email.isEmpty {
@@ -151,8 +199,45 @@ struct AppText {
             "Reset credits: \(summary.availableCount) available · \(expiry)")
     }
 
+    func subscriptionExpiry(_ date: Date?) -> String {
+        guard let date else { return self.subscriptionExpiryUnknown }
+        return self.value(
+            "订阅到期：\(self.date(date)) · \(self.expiryDescription(date))",
+            "Subscription expires: \(self.date(date)) · \(self.expiryDescription(date))")
+    }
+
     func updated(_ date: Date) -> String {
         "\(self.updated)：\(self.time(date))"
+    }
+
+    func updateAvailableMessage(_ version: String) -> String {
+        self.value(
+            "发现新版本 \(version)，是否打开下载页面？",
+            "Version \(version) is available. Open the download page?")
+    }
+
+    func upToDateMessage(_ version: String) -> String {
+        self.value(
+            "当前已是最新版本（\(version)）。",
+            "You're already using the latest version (\(version)).")
+    }
+
+    func updateErrorMessage(_ error: Error) -> String {
+        guard let error = error as? CodexUpdateError else {
+            return error.localizedDescription
+        }
+        switch error {
+        case .invalidResponse:
+            return self.value("更新信息格式无法识别。", "Unable to understand the update information.")
+        case .invalidVersion:
+            return self.value("当前版本号无法识别。", "Unable to identify the current version.")
+        case let .server(statusCode):
+            return self.value(
+                "更新服务返回错误（HTTP \(statusCode)）。",
+                "The update service returned an error (HTTP \(statusCode)).")
+        case let .network(message):
+            return self.value("网络请求失败：\(message)", "Network request failed: \(message)")
+        }
     }
 
     func errorMessage(_ error: Error) -> String {
@@ -163,16 +248,42 @@ struct AppText {
         switch error {
         case .authFileMissing:
             return self.value(
-                "没有找到 auth.json，请先运行 codex login。",
-                "auth.json not found. Run codex login first.")
+                "没有找到此账号的登录凭据，请在管理账号中重新登录。",
+                "Credentials for this account are missing. Log in again in Manage accounts.")
         case .invalidAuth:
             return self.value(
-                "auth.json 无法解析，请重新运行 codex login。",
-                "Unable to parse auth.json. Run codex login again.")
+                "此账号的登录凭据无法解析，请在管理账号中重新登录。",
+                "Credentials for this account are invalid. Log in again in Manage accounts.")
         case .unauthorized:
             return self.value(
-                "Codex 登录状态已失效，请重新运行 codex login。",
-                "Codex login has expired. Run codex login again.")
+                "此账号需要重新登录，请在管理账号中选择重新登录。",
+                "This account needs to log in again. Choose Log in again in Manage accounts.")
+        case .forbidden:
+            return self.value("额度接口拒绝访问（HTTP 403），请检查账号权限或网络访问限制。",
+                              "Usage access was denied (HTTP 403). Check account permissions or network restrictions.")
+        case .unsupportedAuth:
+            return self.value("API Key 登录不支持查询 ChatGPT 订阅额度，请添加 ChatGPT 账号。",
+                              "API key login cannot query ChatGPT subscription limits. Add a ChatGPT account.")
+        case .credentialsChanged:
+            return self.value("账号登录状态已在其他地方更新，请刷新后重试。",
+                              "Account credentials changed elsewhere. Refresh and try again.")
+        case .identityMismatch:
+            return self.value("登录的账号或工作区与原账号不一致，原登录状态已保留。",
+                              "The login belongs to another account or workspace. The original credentials were preserved.")
+        case .currentAccountRemoval:
+            return self.value("此账号正在被 Codex 使用，请先切换到其他账号再删除。",
+                              "Codex is using this account. Switch to another account before deleting it.")
+        case .accountStorage:
+            return self.value("账号文件操作失败，请检查文件权限后重试。",
+                              "Unable to update account files. Check file permissions and retry.")
+        case .authenticationUnavailable:
+            return self.value("自动续期失败，请检查网络和 Codex CLI 版本后重试，或重新登录此账号。",
+                              "Automatic renewal failed. Check your network and Codex CLI version, or log in to this account again.")
+        case .operationTimedOut:
+            return self.value("账号操作超时，请重试。", "The account operation timed out. Please retry.")
+        case .loginFailed:
+            return self.value("账号登录未完成，原登录状态已保留。",
+                              "Login did not complete. The original credentials were preserved.")
         case .invalidResponse:
             return self.value(
                 "Codex 返回的数据格式无法识别。",
@@ -236,6 +347,13 @@ struct AppText {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: self.language == .english ? "en_US" : "zh_CN")
         formatter.dateFormat = "M/d HH:mm"
+        return formatter.string(from: date)
+    }
+
+    private func date(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: self.language == .english ? "en_US" : "zh_CN")
+        formatter.dateFormat = "yyyy/M/d"
         return formatter.string(from: date)
     }
 

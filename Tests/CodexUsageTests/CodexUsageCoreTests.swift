@@ -17,7 +17,7 @@ struct CodexUsageCoreTests {
         #expect(credentials.email == "dev@example.com")
     }
 
-    @Test func parsesUsageAndResetCreditPayloads() throws {
+    @Test func parsesUsageResetCreditAndSubscriptionPayloads() throws {
         let usageData = Data(#"""
         {
             "plan_type": "pro",
@@ -38,9 +38,11 @@ struct CodexUsageCoreTests {
             ]
         }
         """#.utf8)
+        let subscriptionData = Data(#"{"plan_type":"pro","active_until":"2099-01-01T00:00:00Z","will_renew":true}"#.utf8)
 
         let response = try CodexUsageClient.decodeUsageResponse(data: usageData)
         let reset = try CodexUsageClient.decodeResetCredits(data: resetData)
+        let subscription = try CodexUsageClient.decodeSubscription(data: subscriptionData)
 
         #expect(response.planType == "pro")
         #expect(response.rateLimit?.primaryWindow?.usedPercent?.value == 25)
@@ -48,6 +50,7 @@ struct CodexUsageCoreTests {
         #expect(response.credits?.balance?.value == 12.5)
         #expect(reset.availableCount == 2)
         #expect(reset.nextExpiry != nil)
+        #expect(subscription.activeUntil?.value == Date(timeIntervalSince1970: 4070908800))
     }
 
     @Test func resolvesCodexBaseURLFromConfig() {
@@ -56,6 +59,13 @@ struct CodexUsageCoreTests {
         #expect(
             CodexUsageClient.chatGPTBaseURL(in: "chatgpt_base_url = 'https://example.com/api'")
                 == "https://example.com/api")
+    }
+
+    @Test func comparesReleaseVersions() {
+        #expect(CodexUpdateChecker.Version("v0.2.0")! > CodexUpdateChecker.Version("0.1.0")!)
+        #expect(CodexUpdateChecker.Version("0.1.0-beta.10")! > CodexUpdateChecker.Version("0.1.0-beta.9")!)
+        #expect(CodexUpdateChecker.Version("0.1.0-rc.1")! > CodexUpdateChecker.Version("0.1.0-beta.10")!)
+        #expect(CodexUpdateChecker.Version("v0.1.0-beta.9")! < CodexUpdateChecker.Version("0.1.0")!)
     }
 
     @Test func switchingAccountPreservesThePreviousSystemAccount() throws {
@@ -92,6 +102,52 @@ struct CodexUsageCoreTests {
             .replacingOccurrences(of: "+", with: "-")
             .replacingOccurrences(of: "/", with: "_")
             .replacingOccurrences(of: "=", with: "")
+    }
+
+    @Test func switchingAwayUpdatesAnExistingBackup() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = CodexAccountStore(
+            applicationSupportURL: root.appendingPathComponent("support"),
+            environment: ["CODEX_HOME": root.appendingPathComponent("system").path])
+        try FileManager.default.createDirectory(at: store.systemHomeURL, withIntermediateDirectories: true)
+        let firstHome = try store.createManagedHome()
+        let oldData = try Self.authData(email: "first@example.com", accountID: "first")
+        try oldData.write(to: firstHome.appendingPathComponent("auth.json"))
+        _ = try store.registerManagedAccount(at: firstHome)
+        var renewed = try #require(JSONSerialization.jsonObject(with: oldData) as? [String: Any])
+        var tokens = try #require(renewed["tokens"] as? [String: String])
+        tokens["access_token"] = "renewed-token"
+        renewed["tokens"] = tokens
+        let renewedData = try JSONSerialization.data(withJSONObject: renewed)
+        try renewedData.write(to: store.systemHomeURL.appendingPathComponent("auth.json"))
+        let secondHome = try store.createManagedHome()
+        try Self.authData(email: "second@example.com", accountID: "second")
+            .write(to: secondHome.appendingPathComponent("auth.json"))
+        let second = try store.registerManagedAccount(at: secondHome)
+
+        try store.activate(second)
+        let first = try #require(store.loadAccounts().first { $0.accountID == "first" })
+        #expect(try store.credentials(for: first).accessToken == "renewed-token")
+        try store.activate(first)
+        #expect(try Data(contentsOf: store.systemHomeURL.appendingPathComponent("auth.json")) == renewedData)
+    }
+
+    @Test func registeringCurrentIdentityReturnsASelectableAccount() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = CodexAccountStore(
+            applicationSupportURL: root.appendingPathComponent("support"),
+            environment: ["CODEX_HOME": root.appendingPathComponent("system").path])
+        try FileManager.default.createDirectory(at: store.systemHomeURL, withIntermediateDirectories: true)
+        let data = try Self.authData(email: "first@example.com", accountID: "first")
+        try data.write(to: store.systemHomeURL.appendingPathComponent("auth.json"))
+        let home = try store.createManagedHome()
+        try data.write(to: home.appendingPathComponent("auth.json"))
+
+        let registered = try store.registerManagedAccount(at: home)
+
+        #expect(store.loadAccounts().contains { $0.id == registered.id })
     }
 
     private static func authData(email: String, accountID: String) throws -> Data {
