@@ -42,23 +42,23 @@ swift build
 
 重置额度仅展示服务端返回的可用数量和到期时间；应用不会自动兑换或修改额度。
 
-## GitHub Actions
+## 研发与发布工作流
 
-向 `dev` 或 `main` 提交 PR 时会自动运行测试与构建。
+项目采用 **GitHub Flow / Trunk-Based Development** 单主干模式，由 GitHub Actions 与 Release Please 驱动：
 
-合并到 `dev` 后，会根据 Conventional Commits 自动计算下一个版本，使用 GitHub Actions 运行编号生成递增的 Beta Tag（例如 `v0.2.0-beta.12`），并创建包含 DMG 与 SHA256 校验文件的 GitHub Pre-release。
+1. **持续集成 (CI)**：向 `main` 提交 Pull Request 时会自动触发代码编译与单元测试。
+2. **自动化 Beta 预览**：
+   - 特性分支合并至 `main` 后，会自动根据 Conventional Commits 分析变更，计算下一个版本号并生成 Beta Tag（例如 `v0.2.0-beta.1`）。
+   - 自动构建并发布包含 DMG 安装包与 SHA256 校验文件的 GitHub Pre-release。
+3. **正式发布 (Release Please)**：
+   - 合并至 `main` 时，Release Please 会自动维护一个「正式发布待审 PR」（自动汇总 `CHANGELOG.md` 并更新版本号）。
+   - 当积累的功能稳定、准备发布正式版本时，只需在 GitHub 页面上**手动批准并合并该 Release PR**。
+   - 合并后流水线会自动打上正式 Tag（例如 `v0.2.0`），构建 DMG 并生成正式 GitHub Release。
 
-使用 merge commit 将 `dev` 合并到 `main` 后，会把最新 Beta 提升为同版本号的正式 Tag（例如 `v0.2.0`），并创建 GitHub Release。不要使用 squash 或 rebase 合并。
+版本递增规则（遵循 Conventional Commits）：
 
-发布任务会串行执行。等待当前 `Auto Release` 完成后，再合并下一次发布变更，避免 GitHub 取消排队中的旧任务。
-
-Beta 版本递增规则：
-
-- `fix:` / `perf:`：递增补丁版本
-- `feat:`：递增次版本
-- `BREAKING CHANGE:` 或带 `!` 的提交：递增主版本
-- 其他提交：不生成新版本
-
-首次发布使用 `Resources/Info.plist` 中的版本作为起始版本。
+- `fix:` / `perf:`：递增补丁版本 (Patch)
+- `feat:`：递增次版本 (Minor)
+- `BREAKING CHANGE:` 或提交类型后带 `!`：递增主版本 (Major)
 
 当前发布包仍使用 ad-hoc 签名，暂未配置 Developer ID 签名和 Apple 公证；首次打开时 macOS 可能需要在「系统设置 → 隐私与安全性」中手动允许。

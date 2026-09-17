@@ -1,0 +1,15 @@
+{
+  "packages": {
+    ".": {
+      "package-name": "CodexUsage",
+      "release-type": "simple",
+      "extra-files": [
+        {
+          "type": "xml",
+          "path": "Resources/Info.plist",
+          "xpath": "//key[text()='CFBundleShortVersionString']/following-sibling::string[1]"
+        }
+      ]
+    }
+  }
+}

@@ -3,7 +3,6 @@ name: CI
 on:
   pull_request:
     branches:
-      - dev
       - main
   workflow_dispatch:
 
@@ -15,8 +14,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build:
-    name: Test and package macOS app
+  test:
+    name: Test and package check
     runs-on: macos-15
 
     steps:
