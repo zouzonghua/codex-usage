@@ -6,6 +6,10 @@
 - 查看可用的 Codex 重置额度及最近到期时间
 - 切换已保存的 Codex 账号
 
+<p align="center">
+  <img src="Resources/screenshot.png" alt="CodexUsage Screenshot" width="600" />
+</p>
+
 ## 设计取舍
 
 - SwiftPM 原生实现，零第三方依赖，macOS 14+。
