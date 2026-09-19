@@ -1,13 +1,6 @@
 #!/bin/bash
 set -euo pipefail
 
-beta_number="${1:-}"
-
-if [[ ! "$beta_number" =~ ^[1-9][0-9]*$ ]]; then
-    echo "Beta releases require a positive numeric beta number." >&2
-    exit 1
-fi
-
 initial_version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' Resources/Info.plist 2>/dev/null || echo "0.1.0")"
 
 if [[ ! "$initial_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
@@ -86,7 +79,14 @@ beta_tag_at_head="$(
 if [[ -n "$beta_tag_at_head" ]]; then
     release_tag="$beta_tag_at_head"
 else
-    release_tag="v${next_version}-beta.${beta_number}"
+    latest_beta_number="$(
+        git tag --list "v${next_version}-beta.*" |
+            grep -E "^v${next_version//./\\.}-beta\.[1-9][0-9]*$" |
+            sed -E 's/.*-beta\.//' |
+            sort -n |
+            tail -n 1 || true
+    )"
+    release_tag="v${next_version}-beta.$(( ${latest_beta_number:-0} + 1 ))"
 fi
 
 write_output skip false
