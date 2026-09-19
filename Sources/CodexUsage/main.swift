@@ -454,8 +454,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                         cachedDailyData,
                         resetCredits: refreshResetCredits,
                         subscription: refreshSubscription)
-                    self.dailyUsageCacheByAccount[cacheKey] = attemptData
-                    self.saveDailyUsageCache()
                     dailyData = try await self.refreshAdditionalData(
                         cached: attemptData,
                         refreshResetCredits: refreshResetCredits,
