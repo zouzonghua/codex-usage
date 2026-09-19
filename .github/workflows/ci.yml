@@ -32,3 +32,13 @@ jobs:
 
       - name: Build release binary
         run: swift build -c release
+
+      - name: Verify app packaging
+        env:
+          ARTIFACT_LABEL: ci
+          DIST_DIR: ${{ runner.temp }}/codex-package
+        shell: bash
+        run: |
+          set -euo pipefail
+          BIN_DIR="$(swift build -c release --show-bin-path)" ./Scripts/package_app.sh
+          test -f "$DIST_DIR/CodexUsage-ci.dmg"
