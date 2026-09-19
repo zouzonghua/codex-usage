@@ -100,10 +100,8 @@ jobs:
 
       - name: Resolve beta version
         id: beta
-        env:
-          BETA_NUMBER: ${{ github.run_number }}
         shell: bash
-        run: ./Scripts/resolve_beta_version.sh "$BETA_NUMBER"
+        run: ./Scripts/resolve_beta_version.sh
 
       - name: Show toolchain
         if: steps.beta.outputs.skip != 'true'
