@@ -1,5 +1,9 @@
 import Foundation
+#if os(Linux)
+import Glibc
+#else
 import Darwin
+#endif
 
 public struct CodexCLI: Sendable {
     private let executable: URL?

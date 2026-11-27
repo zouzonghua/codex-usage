@@ -42,3 +42,23 @@ jobs:
           set -euo pipefail
           BIN_DIR="$(swift build -c release --show-bin-path)" ./Scripts/package_app.sh
           test -f "$DIST_DIR/CodexUsage-ci.dmg"
+
+  linux:
+    name: Linux CLI
+    runs-on: ubuntu-24.04
+    container: swift:6.0-jammy
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Test and build CLI
+        run: |
+          swift test
+          swift build -c release --product codex-usage
+
+      - name: Verify CLI with isolated credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          cli="$(swift build -c release --show-bin-path)/codex-usage"
+          ./Scripts/test_cli.sh "$cli"

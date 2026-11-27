@@ -21,8 +21,21 @@ public final class CodexAccountStore {
         self.fileManager = fileManager
         self.environment = environment
         self.applicationSupportURL = applicationSupportURL
-            ?? fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-                .appendingPathComponent("CodexUsage", isDirectory: true)
+            ?? Self.defaultApplicationSupport(environment: environment, fileManager: fileManager)
+    }
+
+    private static func defaultApplicationSupport(environment: [String: String], fileManager: FileManager) -> URL {
+        #if os(Linux)
+        let dataHome: URL
+        if let path = environment["XDG_DATA_HOME"], path.hasPrefix("/") {
+            dataHome = URL(fileURLWithPath: path, isDirectory: true)
+        } else {
+            dataHome = fileManager.homeDirectoryForCurrentUser.appendingPathComponent(".local/share", isDirectory: true)
+        }
+        #else
+        let dataHome = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        #endif
+        return dataHome.appendingPathComponent("CodexUsage", isDirectory: true)
     }
 
     public var systemHomeURL: URL {
@@ -170,6 +183,10 @@ public final class CodexAccountStore {
 
     @discardableResult
     public func registerManagedAccount(at homeURL: URL) throws -> CodexAccount {
+        try self.registerManagedAccount(at: homeURL, updateCurrent: true)
+    }
+
+    private func registerManagedAccount(at homeURL: URL, updateCurrent: Bool) throws -> CodexAccount {
         try self.validateManagedHome(homeURL)
         let data = try Data(contentsOf: homeURL.appendingPathComponent("auth.json"))
         let credentials = try Self.parseCredentials(data: data)
@@ -201,6 +218,7 @@ public final class CodexAccountStore {
                 try self.writePrivate(data, to: URL(fileURLWithPath: duplicate.homePath).appendingPathComponent("auth.json"))
             }
         }
+        guard updateCurrent else { return account }
         if Self.sameIdentity(credentials.identity, Self.credentials(at: self.systemHomeURL)?.identity) {
             try self.writePrivate(data, to: self.systemHomeURL.appendingPathComponent("auth.json"))
             try self.synchronizeSystemCredentials()
@@ -276,7 +294,7 @@ public final class CodexAccountStore {
         }
 
         let systemURL = self.systemHomeURL.appendingPathComponent("auth.json", isDirectory: false)
-        let currentData = try? Data(contentsOf: systemURL)
+        let currentData = try self.readCurrentAuth(at: systemURL)
         if let currentData, currentData != targetData {
             guard (try? Self.parseCredentials(data: currentData)) != nil else {
                 throw CodexUsageError.accountSwitch("当前账号备份失败")
@@ -284,7 +302,7 @@ public final class CodexAccountStore {
             let backupURL = try self.createManagedHome()
             do {
                 try self.writePrivate(currentData, to: backupURL.appendingPathComponent("auth.json"))
-                _ = try self.registerManagedAccount(at: backupURL)
+                _ = try self.registerManagedAccount(at: backupURL, updateCurrent: false)
             } catch {
                 self.removeManagedHome(backupURL)
                 throw CodexUsageError.accountSwitch("当前账号备份失败")
@@ -293,9 +311,28 @@ public final class CodexAccountStore {
 
         do {
             try self.fileManager.createDirectory(at: self.systemHomeURL, withIntermediateDirectories: true)
+            guard try self.readCurrentAuth(at: systemURL) == currentData else {
+                throw CodexUsageError.credentialsChanged
+            }
             try self.writePrivate(targetData, to: systemURL)
+        } catch let error as CodexUsageError {
+            throw error
         } catch {
             throw CodexUsageError.accountSwitch("无法更新当前 Codex auth.json")
+        }
+    }
+
+    private func readCurrentAuth(at url: URL) throws -> Data? {
+        do {
+            return try Data(contentsOf: url)
+        } catch let error as CocoaError where error.code == .fileReadNoSuchFile {
+            // A dangling link is an existing entry and cannot be backed up.
+            guard (try? self.fileManager.destinationOfSymbolicLink(atPath: url.path)) == nil else {
+                throw CodexUsageError.accountSwitch("当前账号备份失败")
+            }
+            return nil
+        } catch {
+            throw CodexUsageError.accountSwitch("当前账号备份失败")
         }
     }
 

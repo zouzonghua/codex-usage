@@ -1,6 +1,6 @@
 # CodexUsage
 
-一个极简的 macOS 菜单栏应用，只做三件事：
+CodexUsage 提供 macOS 菜单栏应用和 [Linux CLI](#linux-cli)。菜单栏应用支持：
 
 - 查看 Codex 5 小时 / 周额度与重置时间
 - 查看可用的 Codex 重置额度及最近到期时间
@@ -32,6 +32,26 @@
 ```sh
 swift run CodexUsage
 ```
+
+## Linux CLI
+
+需要 Swift 6.0+。构建后运行：
+
+```sh
+swift build -c release --product codex-usage
+.build/release/codex-usage status
+.build/release/codex-usage status --json
+.build/release/codex-usage accounts
+.build/release/codex-usage import
+.build/release/codex-usage import /path/to/another-codex-home
+.build/release/codex-usage switch ACCOUNT_ID
+```
+
+`import` 默认保存当前登录，也可以导入指定目录中的 `auth.json`。账号 ID 从 `accounts` 获取，`*` 标记当前文件中的账号。导入和查询需要 ChatGPT OAuth 登录。
+
+在 Linux 上，账号归档默认保存在 `~/.local/share/CodexUsage`。将 `XDG_DATA_HOME` 设为绝对路径时，归档保存在 `$XDG_DATA_HOME/CodexUsage`。
+
+在有效的 Codex home（`CODEX_HOME` 或 `~/.codex`）下，将 `config.toml` 的顶层配置设为 `cli_auth_credentials_store = "file"`。切换后新开 Codex 会话以读取更新后的凭据。
 
 ## 验证
 
