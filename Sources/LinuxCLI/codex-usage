@@ -1,0 +1,380 @@
+#!/usr/bin/env python3
+"""CodexUsage for Linux. Uses only the Python standard library."""
+
+import argparse
+import base64
+import binascii
+import contextlib
+import datetime
+import fcntl
+import json
+import os
+from pathlib import Path
+import selectors
+import shutil
+import stat
+import subprocess
+import sys
+import tempfile
+import time
+import urllib.error
+import urllib.request
+import uuid
+
+
+USAGE_URL = "https://chatgpt.com/backend-api/wham/usage"
+
+
+class UsageError(Exception):
+    pass
+
+
+def read_auth(path):
+    # Refuse symlinks and special files, including dangling links and FIFOs.
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except FileNotFoundError:
+        return None
+    with os.fdopen(fd, "rb") as file:
+        if not stat.S_ISREG(os.fstat(file.fileno()).st_mode):
+            raise UsageError("auth.json must be a regular file.")
+        return file.read()
+
+
+def write_auth(path, data, expected):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(prefix=".auth-", dir=path.parent)
+    try:
+        with os.fdopen(fd, "wb") as file:
+            file.write(data)
+            file.flush()
+            os.fsync(file.fileno())
+        if read_auth(path) != expected:
+            raise UsageError("Credentials changed during the operation. Retry.")
+        os.replace(temporary, path)
+    finally:
+        Path(temporary).unlink(missing_ok=True)
+
+
+def claims(token):
+    try:
+        payload = token.split(".")[1]
+        decoded = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
+        return decoded if isinstance(decoded, dict) else {}
+    except (IndexError, ValueError, binascii.Error):
+        return {}
+
+
+def mapping(value):
+    return value if isinstance(value, dict) else {}
+
+
+def text(value):
+    return value.strip() if isinstance(value, str) else ""
+
+
+def refresh_timestamp(value):
+    try:
+        parsed = datetime.datetime.fromisoformat(text(value).replace("Z", "+00:00"))
+        return parsed.timestamp() if parsed.tzinfo is not None else None
+    except (ValueError, OverflowError, OSError):
+        return None
+
+
+class Login:
+    def __init__(self, data):
+        if data is None:
+            raise UsageError("No file-based login. Run codex login with file credential storage.")
+        auth = mapping(json.loads(data))
+        if auth.get("OPENAI_API_KEY"):
+            raise UsageError("A ChatGPT OAuth login is required.")
+        tokens = mapping(auth.get("tokens"))
+        self.token = text(tokens.get("access_token") or tokens.get("accessToken"))
+        if not self.token:
+            raise UsageError("Invalid ChatGPT auth.json.")
+        access_claims = claims(self.token)
+        identity = claims(text(tokens.get("id_token") or tokens.get("idToken"))) or access_claims
+        workspace = mapping(identity.get("https://api.openai.com/auth"))
+        profile = mapping(identity.get("https://api.openai.com/profile"))
+        self.email = text(identity.get("email") or profile.get("email"))
+        self.user = text(workspace.get("chatgpt_user_id") or identity.get("sub"))
+        self.workspace = text(tokens.get("account_id") or tokens.get("accountId")
+                              or workspace.get("chatgpt_account_id") or identity.get("chatgpt_account_id"))
+        expiry = access_claims.get("exp")
+        self.expiry = expiry if isinstance(expiry, (int, float)) else None
+        self.refreshed = refresh_timestamp(auth.get("last_refresh"))
+        self.data = data
+
+    def matches(self, other):
+        if not self.workspace or self.workspace != other.workspace:
+            return False
+        if self.user and other.user:
+            return self.user == other.user
+        return bool(self.email) and self.email.casefold() == other.email.casefold()
+
+    def older_than(self, other):
+        if self.refreshed is not None and other.refreshed is not None:
+            return self.refreshed < other.refreshed
+        return self.expiry is not None and other.expiry is not None and self.expiry < other.expiry
+
+    def label(self, fallback):
+        return " ".join((self.email or fallback).split())
+
+
+class Store:
+    def __init__(self):
+        self.active = Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex") / "auth.json"
+        xdg = Path(os.environ.get("XDG_DATA_HOME", ""))
+        self.root = (xdg if xdg.is_absolute() else Path.home() / ".local/share") / "CodexUsage"
+        self.accounts = self.root / "accounts"
+
+    @contextlib.contextmanager
+    def locked(self):
+        self.root.mkdir(parents=True, exist_ok=True)
+        # Use POSIX record locking to match the previous Linux CLI.
+        fd = os.open(self.root / "credentials.lock", os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+        with os.fdopen(fd, "wb"):
+            fcntl.lockf(fd, fcntl.LOCK_EX)
+            yield
+
+    def saved(self):
+        if not self.accounts.exists():
+            return
+        for home in sorted(self.accounts.iterdir()):
+            try:
+                account_id = str(uuid.UUID(home.name))
+                if home.is_symlink() or home.name.lower() != account_id:
+                    continue
+                yield home.name, Login(read_auth(home / "auth.json"))
+            except (ValueError, OSError, UsageError):
+                continue
+
+    def archive(self, login):
+        if not login.workspace or not (login.user or login.email):
+            raise UsageError("The login does not identify a ChatGPT account and workspace.")
+        for account_id, saved in self.saved():
+            if login.matches(saved):
+                if login.data != saved.data and not login.older_than(saved):
+                    write_auth(self.accounts / account_id / "auth.json", login.data, saved.data)
+                return account_id
+        account_id = str(uuid.uuid4())
+        write_auth(self.accounts / account_id / "auth.json", login.data, None)
+        return account_id
+
+    def list_accounts(self):
+        data = read_auth(self.active)
+        active = Login(data) if data is not None else None
+        if active:
+            print(f"* system\t{active.label('current')}")
+        for account_id, login in self.saved():
+            if active is None or not active.matches(login):
+                print(f"  {account_id}\t{login.label(account_id)}")
+
+    def activate(self, account_id):
+        if account_id == "system":
+            return Login(read_auth(self.active))
+        selected = dict(self.saved()).get(account_id)
+        if selected is None:
+            raise UsageError("Unknown account ID. Run accounts to list IDs.")
+        current = read_auth(self.active)
+        if current is not None:
+            active = Login(current)
+            if active.matches(selected):
+                return active
+            self.archive(active)
+        write_auth(self.active, selected.data, current)
+        return selected
+
+
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, request, fp, code, message, headers, newurl):
+        return None
+
+
+def request_usage(login):
+    headers = {
+        "Authorization": f"Bearer {login.token}",
+        "User-Agent": "CodexUsage",
+        "Accept": "application/json",
+    }
+    if login.workspace:
+        headers["ChatGPT-Account-Id"] = login.workspace
+    request = urllib.request.Request(USAGE_URL, headers=headers)
+    with urllib.request.build_opener(NoRedirect()).open(request, timeout=20) as response:
+        return json.load(response)
+
+
+def refresh_protocol(process):
+    def send(message):
+        process.stdin.write(json.dumps(message).encode() + b"\n")
+        process.stdin.flush()
+
+    send({"id": 1, "method": "initialize", "params": {
+        "clientInfo": {"name": "codex_usage", "version": "1.0.0"},
+    }})
+    deadline = time.monotonic() + 30
+    pending = b""
+    expected = 1
+    with selectors.DefaultSelector() as selector:
+        selector.register(process.stdout, selectors.EVENT_READ)
+        while time.monotonic() < deadline:
+            if not selector.select(max(0, deadline - time.monotonic())):
+                break
+            chunk = os.read(process.stdout.fileno(), 65536)
+            if not chunk:
+                break
+            pending += chunk
+            if len(pending) > 1_048_576:
+                break
+            while b"\n" in pending:
+                line, pending = pending.split(b"\n", 1)
+                if not line.strip():
+                    continue
+                message = mapping(json.loads(line))
+                if message.get("id") != expected:
+                    continue
+                result = mapping(message.get("result"))
+                if "error" in message or not isinstance(message.get("result"), dict):
+                    raise UsageError("Codex could not renew this login. Run codex login again.")
+                if expected == 1:
+                    send({"method": "initialized", "params": {}})
+                    send({"id": 2, "method": "account/read", "params": {"refreshToken": True}})
+                    expected = 2
+                elif mapping(result.get("account")).get("type") == "chatgpt":
+                    return
+                else:
+                    raise UsageError("Codex did not return a ChatGPT login.")
+    raise UsageError("Codex credential renewal did not complete.")
+
+
+def renew(store, login):
+    with tempfile.TemporaryDirectory(prefix="codex-usage-") as directory:
+        staged = Path(directory) / "auth.json"
+        write_auth(staged, login.data, None)
+        env = os.environ.copy()
+        for name in ("CODEX_ACCESS_TOKEN", "CODEX_API_KEY", "OPENAI_API_KEY"):
+            env.pop(name, None)
+        env["CODEX_HOME"] = directory
+        try:
+            # Resolve codex from the caller's PATH before changing directories.
+            executable = shutil.which("codex")
+            if executable is None:
+                raise UsageError("Install the official Codex CLI to renew this login.")
+            process = subprocess.Popen(
+                [str(Path(executable).absolute()), "-c", 'cli_auth_credentials_store="file"',
+                 "app-server", "--listen", "stdio://"],
+                cwd=directory, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+            )
+            with process:
+                try:
+                    refresh_protocol(process)
+                finally:
+                    process.terminate()
+                    try:
+                        process.wait(timeout=1)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+        except (OSError, ValueError) as error:
+            raise UsageError("Codex credential renewal failed. Run codex login again.") from error
+        updated = Login(read_auth(staged))
+        if not login.matches(updated):
+            raise UsageError("Renewed login belongs to a different account.")
+        if updated.token == login.token or (updated.expiry is not None and updated.expiry <= time.time()):
+            raise UsageError("Codex did not return a refreshed access token. Run codex login again.")
+        write_auth(store.active, updated.data, login.data)
+        store.archive(updated)
+        return updated
+
+
+def quota_window(raw):
+    raw = mapping(raw)
+    used = raw.get("used_percent")
+    reset = raw.get("reset_at")
+    if used is None and reset is None:
+        return None
+    window = {"remainingPercent": max(0, min(100, 100 - int(used or 0)))}
+    if reset is not None:
+        seconds = int(reset)
+        if seconds > 100_000_000_000:
+            seconds /= 1000
+        window["resetAt"] = datetime.datetime.fromtimestamp(
+            seconds, datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return window
+
+
+def status(store, as_json):
+    login = Login(read_auth(store.active))
+    renewed = login.expiry is not None and login.expiry <= time.time() + 60
+    if renewed:
+        login = renew(store, login)
+    try:
+        usage = request_usage(login)
+    except urllib.error.HTTPError as error:
+        if error.code != 401 or renewed:
+            raise
+        login = renew(store, login)
+        usage = request_usage(login)
+    limits = mapping(mapping(usage).get("rate_limit"))
+    windows = {key: quota_window(limits.get(f"{key}_window")) for key in ("primary", "secondary")}
+    account = login.label("current")
+    if as_json:
+        print(json.dumps({"account": account, **{key: value for key, value in windows.items() if value}}))
+        return
+    print(f"Account: {account}")
+    for label, window in zip(("5-hour", "Weekly"), windows.values()):
+        if window is None:
+            print(f"{label}: unavailable")
+        else:
+            print(f"{label}: {window['remainingPercent']}% remaining (resets: {window.get('resetAt', 'unknown')})")
+
+
+def main(argv=None):
+    os.umask(0o077)
+    parser = argparse.ArgumentParser(description="Manage file-based Codex logins and query quota.",
+                                     epilog="For scripts and AI, use status --json and accounts to find switch IDs.")
+    commands = parser.add_subparsers(dest="command", metavar="command")
+    quota = commands.add_parser("status", help="query the active login's quota")
+    quota.add_argument("--json", action="store_true", help="emit machine-readable quota data")
+    accounts = commands.add_parser("accounts", help="list login IDs; * marks the active login")
+    importer = commands.add_parser("import", help="save a ChatGPT login from auth.json")
+    importer.add_argument("codex_home", nargs="?", type=Path, help="directory containing auth.json (default: active home)")
+    switch = commands.add_parser("switch", help="activate a saved login")
+    switch.add_argument("id", help="account ID from accounts; restart Codex after switching")
+    help_command = commands.add_parser("help", help="show general or command-specific help")
+    help_command.add_argument("topic", nargs="?", choices=("status", "accounts", "import", "switch"))
+    args = parser.parse_args(argv)
+    if args.command in (None, "help"):
+        pages = {"status": quota, "accounts": accounts, "import": importer, "switch": switch}
+        pages.get(getattr(args, "topic", None), parser).print_help()
+        return 0
+
+    store = Store()
+    try:
+        with store.locked():
+            if args.command == "status":
+                status(store, args.json)
+            elif args.command == "accounts":
+                store.list_accounts()
+            elif args.command == "import":
+                source = store.active if args.codex_home is None else args.codex_home / "auth.json"
+                login = Login(read_auth(source))
+                account_id = store.archive(login)
+                print(f"Saved {login.label(account_id)}")
+            elif args.command == "switch":
+                login = store.activate(args.id)
+                print(f"Active file-based login: {login.label(args.id)}. Start a new Codex session.")
+    except urllib.error.HTTPError as error:
+        print(f"{parser.prog}: quota request failed (HTTP {error.code}).", file=sys.stderr)
+        return 1
+    except UsageError as error:
+        print(f"{parser.prog}: {error}", file=sys.stderr)
+        return 1
+    except (OSError, ValueError, OverflowError):
+        print(f"{parser.prog}: could not read or update credentials, or query quota.", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
