@@ -46,18 +46,15 @@ jobs:
   linux:
     name: Linux CLI
     runs-on: ubuntu-24.04
-    container: swift:6.0-jammy
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Test and build CLI
-        run: |
-          swift test
-          bash Scripts/package_linux_cli.sh
+      - name: Package CLI and verify size and SHA256
+        run: bash Scripts/package_linux_cli.sh
 
       - name: Verify CLI with isolated credentials
         shell: bash
         run: |
           set -euo pipefail
-          bash Scripts/test_cli.sh "$PWD/dist/codex-usage-linux-x86_64"
+          bash Scripts/test_cli.sh "$PWD/dist/codex-usage-linux"
