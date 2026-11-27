@@ -43,6 +43,16 @@ chmod +x codex-usage-linux-x86_64
 ./codex-usage-linux-x86_64 status
 ```
 
+如果希望用短命令 `cu`，可将下载的二进制安装到 `~/.local/bin`，并确保该目录在 `PATH` 中：
+
+```sh
+mkdir -p ~/.local/bin
+install -m 755 codex-usage-linux-x86_64 ~/.local/bin/cu
+cu --help
+cu help switch
+cu status --json
+```
+
 二进制在 Ubuntu 22.04 环境构建，已包含 Swift 标准库。若从源码构建，需要 Swift 6.0+：
 
 ```sh

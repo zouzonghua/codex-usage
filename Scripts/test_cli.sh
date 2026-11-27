@@ -11,6 +11,9 @@ export CFFIXED_USER_HOME="$fixture"
 mkdir -p "$CODEX_HOME" "$fixture/other"
 
 "$cli" --help
+install -m 755 "$cli" "$fixture/cu"
+[[ "$("$fixture/cu" status --help)" == 'Usage: cu status [--json]'* ]]
+[[ "$("$fixture/cu" help switch)" == 'Usage: cu switch <id>'* ]]
 if "$cli" status --json; then
     echo 'Expected status to fail with no login' >&2
     exit 1
