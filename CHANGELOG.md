@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.2](https://github.com/zouzonghua/codex-usage/compare/v0.3.1...v0.3.2) (2026-11-27)
+
+
+### Bug Fixes
+
+* 发布 Go 版 Linux CLI 二进制 ([#27](https://github.com/zouzonghua/codex-usage/issues/27)) ([ed982f6](https://github.com/zouzonghua/codex-usage/commit/ed982f6428889aeda6705aae378dcab515c8ec38))
+
 ## [0.3.1](https://github.com/zouzonghua/codex-usage/compare/v0.3.0...v0.3.1) (2026-11-27)
 
 
