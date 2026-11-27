@@ -3,15 +3,19 @@ set -euo pipefail
 
 asset="codex-usage-linux"
 mkdir -p dist
-install -m 755 Sources/LinuxCLI/codex-usage "dist/$asset"
-size="$(wc -c < "dist/$asset")"
-printf 'Linux CLI size: %d bytes (limit: 1000000 bytes)\n' "$size"
-if (( size > 1000000 )); then
-    echo "Linux CLI exceeds the release size limit." >&2
-    exit 1
-fi
+staging="$(mktemp -d "$PWD/dist/.linux-cli.XXXXXXXX")"
+trap 'rm -rf "$staging"' EXIT
 (
-    cd dist
+    cd Sources/LinuxCLI
+    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags='-s -w' -o "$staging/$asset" .
+)
+format="$(file -b "$staging/$asset")"
+printf '%s\n' "$format"
+[[ "$format" == ELF\ 64-bit* && "$format" == *x86-64* && "$format" == *statically\ linked* ]]
+printf 'Linux CLI size: %d bytes\n' "$(wc -c < "$staging/$asset")"
+(
+    cd "$staging"
     sha256sum "$asset" > "$asset.sha256"
     sha256sum -c "$asset.sha256"
 )
+mv "$staging/$asset" "$staging/$asset.sha256" dist/

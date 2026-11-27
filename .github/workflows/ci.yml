@@ -49,8 +49,16 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: Sources/LinuxCLI/go.mod
+          cache: false
 
-      - name: Package CLI and verify size and SHA256
+      - name: Test quota and credential renewal
+        working-directory: Sources/LinuxCLI
+        run: go test ./...
+
+      - name: Package CLI and verify ELF and SHA256
         run: bash Scripts/package_linux_cli.sh
 
       - name: Verify CLI with isolated credentials
