@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.0](https://github.com/zouzonghua/codex-usage/compare/v0.2.2...v0.3.0) (2026-11-27)
+
+
+### Features
+
+* 发布 Linux CLI 二进制和校验文件 ([#24](https://github.com/zouzonghua/codex-usage/issues/24)) ([440942a](https://github.com/zouzonghua/codex-usage/commit/440942ac820ab41ff975941d6af8ed926aa77b2b))
+* 增加 Linux CodexUsage CLI ([#22](https://github.com/zouzonghua/codex-usage/issues/22)) ([97cd730](https://github.com/zouzonghua/codex-usage/commit/97cd7302a12203d0d924caf3c93a0758bc858d7f))
+
 ## [0.2.2](https://github.com/zouzonghua/codex-usage/compare/v0.2.1...v0.2.2) (2026-09-19)
 
 
