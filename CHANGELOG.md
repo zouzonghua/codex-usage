@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.1](https://github.com/zouzonghua/codex-usage/compare/v0.3.0...v0.3.1) (2026-11-27)
+
+
+### Bug Fixes
+
+* 将 Linux CLI 改为 Python 单文件 ([#25](https://github.com/zouzonghua/codex-usage/issues/25)) ([5ace73d](https://github.com/zouzonghua/codex-usage/commit/5ace73dbcca5d9362b6c65b06bbf49ac28b88dbd))
+
 ## [0.3.0](https://github.com/zouzonghua/codex-usage/compare/v0.2.2...v0.3.0) (2026-11-27)
 
 
