@@ -30,10 +30,32 @@ jobs:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
 
+  build-linux:
+    name: Build Linux CLI assets
+    runs-on: ubuntu-24.04
+    container: swift:6.0-jammy
+    permissions:
+      contents: read
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Package and verify Linux CLI
+        shell: bash
+        run: |
+          bash Scripts/package_linux_cli.sh
+          bash Scripts/test_cli.sh "$PWD/dist/codex-usage-linux-x86_64"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-cli
+          path: dist/codex-usage-linux-x86_64*
+          if-no-files-found: error
+
   # 步骤 2: 当正式版本被发布时（Release PR 被合并），构建并打包正式版本 DMG 资产
   build-stable:
     name: Build stable release assets
-    needs: release-please
+    needs: [release-please, build-linux]
     if: needs.release-please.outputs.release_created == 'true'
     runs-on: macos-15
     timeout-minutes: 20
@@ -73,6 +95,11 @@ jobs:
             shasum -a 256 -c "$dmg.sha256"
           )
 
+      - uses: actions/download-artifact@v4
+        with:
+          name: linux-cli
+          path: dist
+
       - name: Upload Release Assets
         env:
           GH_TOKEN: ${{ github.token }}
@@ -83,12 +110,14 @@ jobs:
           gh release upload "$RELEASE_TAG" \
             "dist/CodexUsage-${RELEASE_TAG}.dmg" \
             "dist/CodexUsage-${RELEASE_TAG}.dmg.sha256" \
+            dist/codex-usage-linux-x86_64 \
+            dist/codex-usage-linux-x86_64.sha256 \
             --clobber
 
   # 步骤 3: 只要本次不是正式 Release，就根据本次 commit 计算出 Beta tag，打 Tag 并发布 Pre-release
   build-beta:
     name: Build beta release
-    needs: release-please
+    needs: [release-please, build-linux]
     if: needs.release-please.outputs.release_created != 'true'
     runs-on: macos-15
     timeout-minutes: 20
@@ -140,6 +169,12 @@ jobs:
             shasum -a 256 -c "$dmg.sha256"
           )
 
+      - uses: actions/download-artifact@v4
+        if: steps.beta.outputs.skip != 'true'
+        with:
+          name: linux-cli
+          path: dist
+
       - name: Create Git tag
         if: steps.beta.outputs.skip != 'true'
         env:
@@ -165,6 +200,8 @@ jobs:
           assets=(
             "dist/CodexUsage-${RELEASE_TAG}.dmg"
             "dist/CodexUsage-${RELEASE_TAG}.dmg.sha256"
+            dist/codex-usage-linux-x86_64
+            dist/codex-usage-linux-x86_64.sha256
           )
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             gh release upload "$RELEASE_TAG" "${assets[@]}" --clobber
