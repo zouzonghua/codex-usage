@@ -1,6 +1,10 @@
 import Foundation
 import Testing
+#if os(Linux)
+import Glibc
+#else
 import Darwin
+#endif
 @testable import CodexUsageCore
 
 @Suite(.serialized)
